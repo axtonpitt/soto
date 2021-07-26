@@ -1,4 +1,17 @@
 #!/bin/sh
+##===----------------------------------------------------------------------===##
+##
+## This source file is part of the Soto for AWS open source project
+##
+## Copyright (c) 2020 the Soto project authors
+## Licensed under Apache License v2.0
+##
+## See LICENSE.txt for license information
+## See CONTRIBUTORS.txt for the list of Soto project authors
+##
+## SPDX-License-Identifier: Apache-2.0
+##
+##===----------------------------------------------------------------------===##
 
 CONTAINER_ID=$(docker container ls | grep localstack/localstack | awk {'print $1'})
 COMMAND=$1
@@ -17,7 +30,7 @@ get_container_id()
 start()
 {
     if [ -z "$CONTAINER_ID" ]; then
-        docker run -d -p 4567-4597:4567-4597 -e SERVICES='apigateway,dynamodb,iam,s3,sns,sqs,ssm' localstack/localstack
+        docker run -d -p 4566-4597:4566-4597 -p 8080:8080 localstack/localstack
     else
         echo "Localstack is already running"
     fi
@@ -53,4 +66,3 @@ else
     usage
     exit -1
 fi
-

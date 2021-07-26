@@ -1,632 +1,208 @@
+//===----------------------------------------------------------------------===//
 //
-//  CodeGenerator.swift
-//  AWSSDKSwift
+// This source file is part of the Soto for AWS open source project
 //
-//  Created by Yuki Takei on 2017/04/04.
-//  Edited by Adam Fowler to use Stencil (https://github.com/stencilproject/Stencil.git) templating library
+// Copyright (c) 2017-2021 the Soto project authors
+// Licensed under Apache License v2.0
 //
+// See LICENSE.txt for license information
+// See CONTRIBUTORS.txt for the list of Soto project authors
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+//===----------------------------------------------------------------------===//
 
+import Dispatch
 import Foundation
-import SwiftyJSON
+import HummingbirdMustache
+import SwiftFormat
 
-extension Location {
-    func enumStyleDescription() -> String {
-        switch self {
-        case .uri(locationName: let name):
-            return ".uri(locationName: \"\(name)\")"
-        case .querystring(locationName: let name):
-            return ".querystring(locationName: \"\(name)\")"
-        case .header(locationName: let name):
-            return ".header(locationName: \"\(name)\")"
-        case .body(locationName: let name):
-            return ".body(locationName: \"\(name)\")"
-        }
+struct CodeGenerator {
+    static let sfDisabledRules = FormatRules.disabledByDefault + ["redundantReturn", "redundantBackticks", "trailingCommas", "extensionAccessControl"]
+    static let sfRuleNames = Set(FormatRules.byName.keys).subtracting(sfDisabledRules)
+    static let sfRules: [FormatRule] = sfRuleNames.map { FormatRules.byName[$0]! }
+    static let sfFormtOptions = FormatOptions(
+        ifdefIndent: .noIndent,
+        wrapArguments: .beforeFirst,
+        wrapParameters: .beforeFirst,
+        wrapCollections: .beforeFirst,
+        hoistPatternLet: false,
+        stripUnusedArguments: .unnamedOnly,
+        explicitSelf: .insert,
+        noSpaceOperators: ["...", "..<"]
+    )
+
+    let command: CodeGeneratorCommand
+    let library: HBMustacheLibrary
+
+    init(command: CodeGeneratorCommand) throws {
+        self.command = command
+        self.library = try .init(directory: CodeGeneratorCommand.rootPath + "/CodeGenerator/mustache/")
     }
 
-    init?(json: JSON) {
-        guard let name = json["locationName"].string else {
-            return nil
+    func getModelDirectories() -> [String] {
+        if let module = command.module {
+            return Glob.entries(pattern: "\(self.command.inputFolder)/apis/\(module)")
         }
-
-        let loc = json["location"].string ?? "body"
-
-        switch loc.lowercased() {
-        case "uri":
-            self = .uri(locationName: name)
-
-        case "querystring":
-            self = .querystring(locationName: name)
-
-        case "header", "headers":
-            self = .header(locationName: name)
-
-        case  "body":
-            self = .body(locationName: name)
-
-        default:
-            return nil
-        }
-    }
-}
-
-extension ShapeEncoding {
-    func enumStyleDescription() -> String {
-        switch self {
-        case .default:
-            return ".default"
-        case .list(let member):
-            return ".list(member:\"\(member)\")"
-        case .flatList:
-            return ".flatList"
-        case .map(let entry, let key, let value):
-            return ".map(entry:\"\(entry)\", key: \"\(key)\", value: \"\(value)\")"
-        case .flatMap(let key, let value):
-            return ".flatMap(key: \"\(key)\", value: \"\(value)\")"
-        }
+        return Glob.entries(pattern: "\(self.command.inputFolder)/apis/**")
     }
 
-    init?(json: JSON) {
-        if json["type"].string == "list" {
-            if json["flattened"].bool == true {
-                self = .flatList
+    func loadEndpointJSON() throws -> Endpoints {
+        let data = try Data(contentsOf: URL(fileURLWithPath: "\(command.inputFolder)/endpoints/endpoints.json"))
+        return try JSONDecoder().decode(Endpoints.self, from: data)
+    }
+
+    func loadModelJSON() throws -> [(api: API, docs: Docs, paginators: Paginators?, waiters: Waiters?)] {
+        let directories = self.getModelDirectories()
+
+        return try directories.map {
+            guard let apiFile = Glob.entries(pattern: $0 + "/**/api-*.json").first else { fatalError("No API file for \($0)") }
+            guard let docFile = Glob.entries(pattern: $0 + "/**/docs-*.json").first else { fatalError("No Doc file for \($0)") }
+            let data = try Data(contentsOf: URL(fileURLWithPath: apiFile))
+            var api = try JSONDecoder().decode(API.self, from: data)
+            try api.postProcess()
+
+            let docData = try Data(contentsOf: URL(fileURLWithPath: docFile))
+            let docs = try JSONDecoder().decode(Docs.self, from: docData)
+
+            // a paginator file doesn't always exist
+            let paginators: Paginators?
+            if let paginatorFile = Glob.entries(pattern: $0 + "/**/paginators-*.json").first {
+                let paginatorData = try Data(contentsOf: URL(string: "file://\(paginatorFile)")!)
+                paginators = try JSONDecoder().decode(Paginators.self, from: paginatorData)
             } else {
-                self = .list(member: json["member"]["locationName"].string ?? "member")
+                paginators = nil
             }
-        } else if json["type"].string == "map" {
-            let key = json["key"]["locationName"].string ?? "key"
-            let value = json["value"]["locationName"].string ?? "value"
-            if json["flattened"].bool == true {
-                self = .flatMap(key: key, value: value)
+
+            // a waiter file doesn't always exist
+            var waiters: Waiters?
+            if let waiterFile = Glob.entries(pattern: $0 + "/**/waiters-*.json").first {
+                let waiterData = try Data(contentsOf: URL(string: "file://\(waiterFile)")!)
+                waiters = try JSONDecoder().decode(Waiters.self, from: waiterData)
+                try waiters?.patch(serviceName: api.serviceName)
             } else {
-                let entry = "entry"
-                self = .map(entry: entry, key: key, value: value)
+                waiters = nil
             }
+            return (api: api, docs: docs, paginators: paginators, waiters: waiters)
+        }
+    }
+
+    func format(_ string: String) throws -> String {
+        if self.command.swiftFormat {
+            return try SwiftFormat.format(string, rules: Self.sfRules, options: Self.sfFormtOptions)
         } else {
-            return nil
+            return string
         }
+    }
+
+    /// Generate service files from AWSService
+    /// - Parameter codeGenerator: service generated from JSON
+    func generateFiles(with service: AWSService) throws {
+        let basePath = "\(command.outputFolder)/\(service.api.serviceName)/"
+        try FileManager.default.createDirectory(atPath: basePath, withIntermediateDirectories: true)
+
+        let apiContext = service.generateServiceContext()
+        let api = self.library.render(apiContext, withTemplate: "api")!
+        if self.command.output, try self.format(api).writeIfChanged(
+            toFile: "\(basePath)/\(service.api.serviceName)_API.swift"
+        ) {
+            print("Wrote: \(service.api.serviceName)_API.swift")
+        }
+
+        let shapesContext = service.generateShapesContext()
+        let shapes = self.library.render(shapesContext, withTemplate: "shapes")!
+        if self.command.output, try self.format(shapes).writeIfChanged(
+            toFile: "\(basePath)/\(service.api.serviceName)_Shapes.swift"
+        ) {
+            print("Wrote: \(service.api.serviceName)_Shapes.swift")
+        }
+
+        let errorContext = service.generateErrorContext()
+        if errorContext["errors"] != nil {
+            let errors = self.library.render(errorContext, withTemplate: "error")!
+            if self.command.output, try self.format(errors).writeIfChanged(
+                toFile: "\(basePath)/\(service.api.serviceName)_Error.swift"
+            ) {
+                print("Wrote: \(service.api.serviceName)_Error.swift")
+            }
+        }
+
+        let paginatorContext = try service.generatePaginatorContext()
+        if paginatorContext["paginators"] != nil {
+            let paginators = self.library.render(paginatorContext, withTemplate: "paginator")!
+            if self.command.output, try self.format(paginators).writeIfChanged(
+                toFile: "\(basePath)/\(service.api.serviceName)_Paginator.swift"
+            ) {
+                print("Wrote: \(service.api.serviceName)_Paginator.swift")
+            }
+        }
+
+        let waiterContext = try service.generateWaiterContext()
+        if waiterContext["waiters"] != nil {
+            let waiters = self.library.render(waiterContext, withTemplate: "waiter")!
+            if self.command.output, try self.format(waiters).writeIfChanged(
+                toFile: "\(basePath)/\(service.api.serviceName)_Waiter.swift"
+            ) {
+                print("Wrote: \(service.api.serviceName)_Waiter.swift")
+            }
+        }
+        if self.command.verbose {
+            print("Succesfully Generated \(service.api.serviceName)")
+        }
+    }
+
+    func generate() throws {
+        let startTime = Date()
+
+        // load JSON
+        let endpoints = try loadEndpointJSON()
+        let models = try loadModelJSON()
+        let group = DispatchGroup()
+
+        models.forEach { model in
+            group.enter()
+
+            DispatchQueue.global().async {
+                defer { group.leave() }
+                do {
+                    let service = try AWSService(
+                        api: model.api,
+                        docs: model.docs,
+                        paginators: model.paginators,
+                        waiters: model.waiters,
+                        endpoints: endpoints,
+                        stripHTMLTags: !command.htmlComments
+                    )
+                    try self.generateFiles(with: service)
+                } catch {
+                    print("\(error)")
+                    exit(1)
+                }
+            }
+        }
+
+        group.wait()
+
+        print("Code Generation took \(Int(-startTime.timeIntervalSinceNow)) seconds")
+        print("Done.")
     }
 }
 
-extension ServiceProtocol {
-    public func instantiationCode() -> String {
-        if let version = self.version {
-            return "ServiceProtocol(type: .\(type), version: ServiceProtocol.Version(major: \(version.major), minor: \(version.minor)))"
-        } else {
-            return "ServiceProtocol(type: .\(type))"
+extension String {
+    /// Only writes to file if the string contents are different to the file contents. This is used to stop XCode rebuilding and reindexing files unnecessarily.
+    /// If the file is written to XCode assumes it has changed even when it hasn't
+    /// - Parameters:
+    ///   - toFile: Filename
+    ///   - atomically: make file write atomic
+    ///   - encoding: string encoding
+    func writeIfChanged(toFile: String) throws -> Bool {
+        do {
+            let original = try String(contentsOfFile: toFile)
+            guard original != self else { return false }
+        } catch {
+            // print(error)
         }
+        try write(toFile: toFile, atomically: true, encoding: .utf8)
+        return true
     }
-}
-
-extension Shape {
-    public var swiftTypeName: String {
-        switch self.type {
-        case .string(_):
-            return "String"
-        case .integer(_):
-            return "Int"
-        case .structure(_):
-            return name.toSwiftClassCase()
-        case .boolean:
-            return "Bool"
-        case .list(let shape,_,_):
-            return "[\(shape.swiftTypeName)]"
-        case .map(key: let keyShape, value: let valueShape):
-            return "[\(keyShape.swiftTypeName): \(valueShape.swiftTypeName)]"
-        case .long(_):
-            return "Int64"
-        case .double(_):
-            return "Double"
-        case .float(_):
-            return "Float"
-        case .blob:
-            return "Data"
-        case .timestamp:
-            return "TimeStamp"
-        case .enum(_):
-            return name.toSwiftClassCase()
-        case .unhandledType:
-            return "Any"
-        }
-    }
-}
-
-extension ShapeType {
-    var description: String {
-        switch self {
-        case .structure:
-            return "structure"
-        case .list:
-            return "list"
-        case .map:
-            return "map"
-        case .enum:
-            return "enum"
-        case .boolean:
-            return "boolean"
-        case .blob:
-            return "blob"
-        case .double:
-            return "double"
-        case .float:
-            return "float"
-        case .long:
-            return "long"
-        case .integer:
-            return "integer"
-        case .string:
-            return "string"
-        case .timestamp:
-            return "timestamp"
-        case .unhandledType:
-            return "any"
-        }
-    }
-}
-
-extension AWSService {
-    struct ErrorContext {
-        let `enum`: String
-        let string: String
-    }
-
-    struct OperationContext {
-        let comment: [String.SubSequence]
-        let funcName: String
-        let inputShape: String?
-        let outputShape: String?
-        let name: String
-        let path: String
-        let httpMethod: String
-        let deprecated: String?
-    }
-
-    struct EnumMemberContext {
-        let `case`: String
-        let string: String
-    }
-
-    struct EnumContext {
-        let name: String
-        let values: [EnumMemberContext]
-    }
-
-    struct MemberContext {
-        let name : String
-        let variable : String
-        let locationPath : String
-        let location : String?
-        let parameter : String
-        let required : Bool
-        let `default` : String?
-        let type : String
-        let typeEnum : String
-        let encoding : String?
-        let comment : [String.SubSequence]
-        var duplicate : Bool
-    }
-
-    class ValidationContext {
-        let name : String
-        let shape : Bool
-        let required : Bool
-        let reqs : [String : Any]
-        let member : ValidationContext?
-        let key : ValidationContext?
-        let value : ValidationContext?
-
-        init(name: String, shape: Bool = false, required: Bool = true, reqs: [String: Any] = [:], member: ValidationContext? = nil, key: ValidationContext? = nil, value: ValidationContext? = nil) {
-            self.name = name
-            self.shape = shape
-            self.required = required
-            self.reqs = reqs
-            self.member = member
-            self.key = key
-            self.value = value
-        }
-    }
-
-    struct StructureContext {
-        let object : String
-        let name : String
-        let payload : String?
-        let namespace : String?
-        let members : [MemberContext]
-        let validation : [ValidationContext]
-    }
-
-    struct ResultContext {
-        let name: String
-        let type: String
-    }
-    struct PaginatorContext {
-        let operation: OperationContext
-        let output: String
-        let initParams: [String]
-        let paginatorProtocol: String
-        let tokenType: String
-    }
-
-    /// Generate the context information for outputting the error enums
-    func generateErrorContext() -> [String: Any] {
-        var context: [String: Any] = [:]
-        context["name"] = serviceName
-        context["errorName"] = serviceErrorName
-
-        var errorContexts: [ErrorContext] = []
-        for error in errors {
-            let code = error.code ?? error.name
-            errorContexts.append(ErrorContext(enum: error.name.toSwiftVariableCase(), string: code))
-        }
-        if errorContexts.count > 0 {
-            context["errors"] = errorContexts
-        }
-        return context
-    }
-
-    /// generate operations context
-    func generateOperationContext(_ operation: Operation) -> OperationContext {
-        return OperationContext(
-            comment: docJSON["operations"][operation.name].stringValue.tagStriped().split(separator: "\n"),
-            funcName: operation.name.toSwiftVariableCase(),
-            inputShape: operation.inputShape?.swiftTypeName,
-            outputShape: operation.outputShape?.swiftTypeName,
-            name: operation.operationName,
-            path: operation.path,
-            httpMethod: operation.httpMethod,
-            deprecated: operation.deprecatedMessage
-        )
-    }
-    
-    func getMiddleware() -> String? {
-        switch serviceName {
-        case "APIGateway":
-            return "APIGatewayMiddleware()"
-        case "Glacier":
-            return "GlacierRequestMiddleware(apiVersion: \"\(version)\")"
-        case "S3":
-            return "S3RequestMiddleware()"
-        case "S3Control":
-            return "S3ControlMiddleware()"
-        default:
-            return nil
-        }
-    }
-    
-    func getMiddlewareFramework() -> String? {
-        switch serviceName {
-        case "APIGateway":
-            return "APIGatewayMiddleware"
-        case "Glacier":
-            return "GlacierMiddleware"
-        case "S3":
-            return "S3Middleware"
-        case "S3Control":
-            return "S3ControlMiddleware"
-        default:
-            return nil
-        }
-    }
-    
-    /// Generate the context information for outputting the service api calls
-    func generateServiceContext() -> [String: Any] {
-        var context: [String: Any] = [:]
-
-        // Service initialization
-        context["name"] = serviceName
-        context["description"] = serviceDescription
-        context["amzTarget"] = apiJSON["metadata"]["targetPrefix"].string
-        context["endpointPrefix"] = endpointPrefix
-        if signingName != endpointPrefix {
-            context["signingName"] = signingName
-        }
-        context["protocol"] = serviceProtocol.instantiationCode()
-        context["apiVersion"] = version
-        let endpoints = serviceEndpoints.sorted { $0.key < $1.key }.map {return "\"\($0.key)\": \"\($0.value)\""}
-        if endpoints.count > 0 {
-            context["serviceEndpoints"] = endpoints
-        }
-        context["partitionEndpoint"] = partitionEndpoint
-        context["middlewareFramework"] = getMiddlewareFramework()
-        context["middlewareClass"] = getMiddleware()
-
-        if !errors.isEmpty {
-            context["errorTypes"] = serviceErrorName
-        }
-
-        // Operations
-        var operationContexts: [OperationContext] = []
-        for operation in operations {
-            operationContexts.append(generateOperationContext(operation))
-        }
-        context["operations"] = operationContexts
-        return context
-    }
-
-    /// Generate the context information for outputting an enum
-    func generateEnumContext(_ shape: Shape, values: [String]) -> EnumContext {
-
-        // Operations
-        var valueContexts: [EnumMemberContext] = []
-        for value in values {
-            var key = value.lowercased()
-                .replacingOccurrences(of: ".", with: "_")
-                .replacingOccurrences(of: ":", with: "_")
-                .replacingOccurrences(of: "-", with: "_")
-                .replacingOccurrences(of: " ", with: "_")
-                .replacingOccurrences(of: "/", with: "_")
-                .replacingOccurrences(of: "(", with: "_")
-                .replacingOccurrences(of: ")", with: "_")
-                .replacingOccurrences(of: "*", with: "all")
-
-            if Int(String(key[key.startIndex])) != nil { key = "_"+key }
-
-            var caseName = key.camelCased().reservedwordEscaped()
-            if caseName.allLetterIsNumeric() {
-                caseName = "\(shape.name.toSwiftVariableCase())\(caseName)"
-            }
-            valueContexts.append(EnumMemberContext(case: caseName, string: value))
-        }
-
-        return EnumContext(
-            name: shape.name.toSwiftClassCase().reservedwordEscaped(),
-            values: valueContexts
-        )
-    }
-
-    /// Generate the context information for outputting a member variable
-    func generateMemberContext(_ member: Member, shape: Shape) -> MemberContext {
-        let defaultValue : String?
-        if member.options.contains(.idempotencyToken) {
-            defaultValue = "\(shape.swiftTypeName).idempotencyToken()"
-        } else if !member.required {
-            defaultValue = "nil"
-        } else {
-            defaultValue = nil
-        }
-        return MemberContext(
-            name: member.name,
-            variable: member.name.toSwiftVariableCase(),
-            locationPath: member.location?.name ?? member.name,
-            location: member.location?.enumStyleDescription(),
-            parameter: member.name.toSwiftLabelCase(),
-            required: member.required,
-            default: defaultValue,
-            type: member.shape.swiftTypeName + (member.required ? "" : "?"),
-            typeEnum: "\(member.shape.type.description)",
-            encoding: member.shapeEncoding?.enumStyleDescription(),
-            comment: shapeDoc[shape.name]?[member.name]?.split(separator: "\n") ?? [],
-            duplicate: false
-        )
-    }
-
-    /// Generate validation context
-    func generateValidationContext(name: String, shape: Shape, required: Bool, container: Bool = false) -> ValidationContext? {
-        var requirements : [String: Any] = [:]
-        switch shape.type {
-        case .integer(let max, let min),
-             .long(let max, let min),
-             .float(let max, let min),
-             .double(let max, let min):
-            requirements["max"] = max
-            requirements["min"] = min
-
-        case .blob(let max, let min):
-            requirements["max"] = max
-            requirements["min"] = min
-
-        case .list(let shape, let max, let min):
-            requirements["max"] = max
-            requirements["min"] = min
-            // validation code doesn't support containers inside containers. Only service affected by this is SSM
-            if !container {
-                if let memberValidationContext = generateValidationContext(name: name, shape: shape, required: true, container: true) {
-                    return ValidationContext(name: name.toSwiftVariableCase(), required: required, reqs: requirements, member: memberValidationContext)
-                }
-            }
-        case .map(let key, let value):
-            // validation code doesn't support containers inside containers. Only service affected by this is SSM
-            if !container {
-                let keyValidationContext = generateValidationContext(name: name, shape: key, required: true, container: true)
-                let valueValiationContext = generateValidationContext(name: name, shape: value, required: true, container: true)
-                if keyValidationContext != nil || valueValiationContext != nil {
-                    return ValidationContext(name: name.toSwiftVariableCase(), required: required, key: keyValidationContext, value: valueValiationContext)
-                }
-            }
-        case .string(let max, let min, let pattern):
-            requirements["max"] = max
-            requirements["min"] = min
-            if let pattern = pattern {
-                requirements["pattern"] = "\"\(pattern.addingBackslashEncoding())\""
-            }
-        case .structure(let shape):
-            for member2 in shape.members {
-                if generateValidationContext(name:member2.name, shape:member2.shape, required: member2.required) != nil {
-                    return ValidationContext(name: name.toSwiftVariableCase(), shape: true, required: required)
-                }
-            }
-        default:
-            break
-        }
-        if requirements.count > 0 {
-            return ValidationContext(name: name.toSwiftVariableCase(), reqs: requirements)
-        }
-        return nil
-    }
-
-    /// Generate the context for outputting a single AWSShape
-    func generateStructureContext(_ shape: Shape, type: StructureShape) -> StructureContext {
-        var memberContexts : [MemberContext] = []
-        var validationContexts : [ValidationContext] = []
-        var usedLocationPath : [String] = []
-        for member in type.members {
-            var memberContext = generateMemberContext(member, shape: shape)
-
-            // check for duplicates, this seems to be mainly caused by deprecated variables
-            let locationPath = member.location?.name ?? member.name
-            if usedLocationPath.contains(locationPath) {
-                memberContext.duplicate = true
-            } else {
-                usedLocationPath.append(locationPath)
-            }
-
-            memberContexts.append(memberContext)
-
-            // only output validation for shapes used in inputs to service apis
-            if shape.usedInInput {
-                if let validationContext = generateValidationContext(name:member.name, shape: member.shape, required: member.required) {
-                    validationContexts.append(validationContext)
-                }
-            }
-        }
-
-        return StructureContext(
-            object: doesShapeHaveRecursiveOwnReference(shape, type: type) ? "class" : "struct",
-            name: shape.swiftTypeName,
-            payload: type.payload,
-            namespace: type.xmlNamespace,
-            members: memberContexts,
-            validation: validationContexts)
-    }
-
-    /// return if shape has a recursive reference (function only tests 2 levels)
-    func doesShapeHaveRecursiveOwnReference(_ shape: Shape, type: StructureShape) -> Bool {
-        let hasRecursiveOwnReference = type.members.contains(where: { member in
-            // does shape have a member of same type as itself
-            if member.shape.swiftTypeName == shape.swiftTypeName || member.shape.swiftTypeName == "[\(shape.swiftTypeName)]" {
-                return true
-            } else if case .structure(let type) = member.shape.type {
-                // test children structures as well to see if they contain a member of same type as the parent shape
-                if type.members.contains(where: {
-                    return $0.shape.swiftTypeName == shape.swiftTypeName || $0.shape.swiftTypeName == "[\(shape.swiftTypeName)]"
-                }) {
-                    return true
-                }
-            }
-            return false
-        })
-        
-        return hasRecursiveOwnReference
-    }
-    
-    /// Generate the context for outputting all the AWSShape (enums and structures)
-    func generateShapesContext() -> [String: Any] {
-        var context: [String: Any] = [:]
-        context["name"] = serviceName
-
-        var shapeContexts: [[String: Any]] = []
-        for shape in shapes {
-            if shape.usedInInput == false && shape.usedInOutput == false {
-                continue
-            }
-            // don't output error shapes
-            //if errorShapeNames.contains(shape.name) { continue }
-
-            switch shape.type {
-            case .enum(let values):
-                var enumContext: [String: Any] = [:]
-                enumContext["enum"] = generateEnumContext(shape, values: values)
-                shapeContexts.append(enumContext)
-
-            case .structure(let type):
-                var structContext: [String: Any] = [:]
-                structContext["struct"] = generateStructureContext(shape, type: type)
-                shapeContexts.append(structContext)
-
-            default:
-                break
-            }
-        }
-        context["shapes"] = shapeContexts
-        return context
-    }
-
-    /// Generate paginator context
-    func generatePaginatorContext() -> [String: Any] {
-        var context: [String: Any] = [:]
-        context["name"] = serviceName
-
-        var paginatorContexts: [PaginatorContext] = []
-        
-        for paginator in paginators {
-            // get related operation and its input and output shapes
-            guard let operation = operations.first(where: {$0.name == paginator.methodName}),
-                let inputShape = operation.inputShape,
-                let outputShape = operation.outputShape,
-                case .structure(let inputShapeStruct) = inputShape.type,
-                case .structure(let outputShapeStruct) = outputShape.type else {
-                    continue
-            }
-
-            // get input token member
-            guard paginator.inputTokens.count > 0,
-                paginator.outputTokens.count > 0,
-                let inputTokenMember = inputShapeStruct.members.first(where: {$0.name == paginator.inputTokens[0]}) else {
-                    continue
-            }
-            
-            let paginatorProtocol: String
-            let tokenType: String
-            switch inputTokenMember.shape.type {
-            case .string:
-                paginatorProtocol = "AWSPaginateStringToken"
-                tokenType = "String"
-            case .integer:
-                paginatorProtocol = "AWSPaginateIntToken"
-                tokenType = "Int"
-            default:
-                // current this consists of a couple of DynamoDB calls that use dictionaries for keys !?!
-                print("Non Integer/String token \(inputTokenMember.shape.name) in \(serviceName).\(inputShape.name)")
-                continue;
-            }
-            
-            // process output tokens
-            let outputTokens = paginator.outputTokens.map { (token)->String in
-                var split = token.split(separator: ".")
-                for i in 0..<split.count {
-                    // if string contains [-1] replace with '.last'.
-                    if let negativeIndexRange = split[i].range(of: "[-1]") {
-                        split[i].removeSubrange(negativeIndexRange)
-                        
-                        var replacement = "last"
-                        // if a member is mentioned after the '[-1]' then you need to add a ? to the keyPath
-                        if split.count > i+1 {
-                            replacement += "?"
-                        }
-                        split.insert(Substring(replacement), at: i+1)
-                    }
-                }
-                // if output token is member of an optional struct add ? suffix
-                if let outputTokenMember = outputShapeStruct.members.first(where: {$0.name == split[0]}), !outputTokenMember.required, split.count > 1 {
-                    split[0] += "?"
-                }
-                return split.map { String($0).toSwiftVariableCase() }.joined(separator: ".")
-            }
-                        
-            var initParams: [String: String] = [:]
-            for member in inputShapeStruct.members {
-                initParams[member.name.toSwiftLabelCase()] = "self.\(member.name.toSwiftLabelCase())"
-            }
-            initParams[paginator.inputTokens[0].toSwiftLabelCase()] = "token"
-            let initParamsArray = initParams.map {"\($0.key): \($0.value)"}.sorted { $0.lowercased() < $1.lowercased() }
-            paginatorContexts.append(
-                PaginatorContext(
-                    operation: generateOperationContext(operation),
-                    output: outputTokens[0],
-                    initParams: initParamsArray,
-                    paginatorProtocol: paginatorProtocol,
-                    tokenType: tokenType
-                )
-            )
-        }
-        
-        if paginatorContexts.count > 0 {
-            context["paginators"] = paginatorContexts
-        }
-        return context
-    }
-    
-    func getCustomTemplates() -> [String] {
-        return Glob.entries(pattern: "\(rootPath())/CodeGenerator/Templates/Custom/\(endpointPrefix)/*.stencil")
-    }
-
 }

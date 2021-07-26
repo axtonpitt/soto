@@ -1,128 +1,56 @@
+//===----------------------------------------------------------------------===//
+//
+// This source file is part of the Soto for AWS open source project
+//
+// Copyright (c) 2017-2020 the Soto project authors
+// Licensed under Apache License v2.0
+//
+// See LICENSE.txt for license information
+// See CONTRIBUTORS.txt for the list of Soto project authors
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+//===----------------------------------------------------------------------===//
+
+import ArgumentParser
 import Foundation
-import SwiftyJSON
-import Dispatch
-import Stencil
-import PathKit
 
-extension String {
-    /// Only writes to file if the string contents are different to the file contents. This is used to stop XCode rebuilding and reindexing files unnecessarily.
-    /// If the file is written to XCode assumes it has changed even when it hasn't
-    /// - Parameters:
-    ///   - toFile: Filename
-    ///   - atomically: make file write atomic
-    ///   - encoding: string encoding
-    func writeIfChanged(toFile: String, atomically: Bool, encoding: String.Encoding) throws -> Bool {
-        do {
-            let original = try String(contentsOfFile: toFile)
-            guard original != self else { return false }
-        } catch {
-            print(error)
-        }
-        try write(toFile: toFile, atomically: atomically, encoding: encoding)
-        return true
+struct CodeGeneratorCommand: ParsableCommand {
+    @Option(name: .shortAndLong, help: "Folder to output service files to")
+    var outputFolder: String = Self.defaultOutputFolder
+
+    @Option(name: .shortAndLong, help: "Folder to find json model files")
+    var inputFolder: String = Self.defaultInputFolder
+
+    @Option(name: .shortAndLong, help: "Only output files for specified module")
+    var module: String?
+
+    @Flag(name: .long, inversion: .prefixedNo, help: "Output files")
+    var output: Bool = true
+
+    @Flag(name: [.customShort("f"), .customLong("format")], inversion: .prefixedNo, help: "Run swift format on output")
+    var swiftFormat: Bool = false
+
+    @Flag(name: .shortAndLong, help: "Verbose logging")
+    var verbose: Bool = false
+
+    @Flag(name: .long, help: "HTML comments")
+    var htmlComments: Bool = false
+
+    static var rootPath: String {
+        return #file
+            .split(separator: "/", omittingEmptySubsequences: false)
+            .dropLast(4)
+            .map { String(describing: $0) }
+            .joined(separator: "/")
     }
-}
 
-class CodeGenerator {
-    let fsLoader: FileSystemLoader
-    let environment: Environment
-    
-    init() {
-        self.fsLoader = FileSystemLoader(paths: [Path("\(rootPath())/CodeGenerator/Templates/")])
-        self.environment = Environment(loader: fsLoader)
-    }
-    
-    /// Generate service files from AWSService
-    /// - Parameter service: service generated from JSON
-    func generateFiles(from service: AWSService) throws {
+    static var defaultOutputFolder: String { return "\(rootPath)/Sources/Soto/Services" }
+    static var defaultInputFolder: String { return "\(rootPath)/models" }
 
-        let basePath = "\(rootPath())/Sources/AWSSDKSwift/Services/\(service.serviceName)/"
-        _ = mkdirp(basePath)
-
-        let apiContext = service.generateServiceContext()
-        if try environment.renderTemplate(name: "api.stencil", context: apiContext).writeIfChanged(
-                toFile: "\(basePath)/\(service.serviceName)_API.swift",
-                atomically: true,
-                encoding: .utf8
-            ) {
-            print("Wrote: \(service.serviceName)_API.swift")
-        }
-
-        let shapesContext = service.generateShapesContext()
-        if try environment.renderTemplate(name: "shapes.stencil", context: shapesContext).writeIfChanged(
-            toFile: "\(basePath)/\(service.serviceName)_Shapes.swift",
-            atomically: true,
-            encoding: .utf8
-            ) {
-            print("Wrote: \(service.serviceName)_Shapes.swift")
-        }
-
-        let errorContext = service.generateErrorContext()
-        if errorContext["errors"] != nil {
-            if try environment.renderTemplate(name: "error.stencil", context: errorContext).writeIfChanged(
-                toFile: "\(basePath)/\(service.serviceName)_Error.swift",
-                atomically: true,
-                encoding: .utf8
-                ) {
-                print("Wrote: \(service.serviceName)_Error.swift")
-            }
-        }
-
-        let paginatorContext = service.generatePaginatorContext()
-        if paginatorContext["paginators"] != nil {
-            if try environment.renderTemplate(name: "paginator.stencil", context: paginatorContext).writeIfChanged(
-                toFile: "\(basePath)/\(service.serviceName)_Paginator.swift",
-                atomically: true,
-                encoding: .utf8
-                ) {
-                   print("Wrote: \(service.serviceName)_Paginator.swift")
-            }
-        }
-
-        let customTemplates = service.getCustomTemplates()
-        for template in customTemplates {
-            let templateName = URL(fileURLWithPath: template).deletingPathExtension().lastPathComponent
-            if try environment.renderTemplate(name: template).writeIfChanged(
-                toFile: "\(basePath)/\(service.serviceName)+\(templateName).swift",
-                atomically: true,
-                encoding: .utf8
-                ) {
-                print("Wrote: \(service.serviceName)+\(templateName).swift")
-            }
-        }
-        print("Succesfully Generated \(service.serviceName)")
-    }
-    
-    /// Run the code generator, load JSON and generate service files
     func run() throws {
-        // load JSON
-        let models = try loadModelJSON()
-        let endpoint = try loadEndpointJSON()
-
-        let group = DispatchGroup()
-
-        models.forEach { model in
-            group.enter()
-            
-            DispatchQueue.global().async {
-                defer { group.leave() }
-                do {
-                    let service = try AWSService(fromAPIJSON: model.api, paginatorJSON: model.paginator, docJSON: model.doc, endpointJSON: endpoint)
-                    try self.generateFiles(from: service)
-                } catch {
-                    print(error)
-                    exit(1)
-                }
-            }
-        }
-
-        group.wait()
+        try CodeGenerator(command: self).generate()
     }
 }
 
-let startTime = Date()
-
-try CodeGenerator().run()
-
-print("Code Generation took \(Int(-startTime.timeIntervalSinceNow)) seconds")
-print("Done.")
+CodeGeneratorCommand.main()

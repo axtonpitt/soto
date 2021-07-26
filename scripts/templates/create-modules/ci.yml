@@ -6,7 +6,7 @@ on:
     - "*"
   pull_request:
     branches:
-    - master
+    - main
 
 jobs:
   macos:
@@ -23,14 +23,14 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        tag: ['swift:5.0', 'swift:5.1', 'swift:5.2']
+        tag: ['swift:5.2', 'swift:5.3', 'swift:5.4']
     container:
       image: ${{ matrix.tag }}
     steps:
     - name: Install dependencies
       run: |
         apt-get update -qq
-        apt-get install -q -y tzdata libssl-dev zlib1g-dev
+        apt-get install -q -y tzdata zlib1g-dev
     - name: Checkout
       uses: actions/checkout@v1
       with:

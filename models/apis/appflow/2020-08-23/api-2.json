@@ -385,6 +385,13 @@
       "max":512,
       "pattern":".*"
     },
+    "ClientCredentialsArn":{
+      "type":"string",
+      "max":2048,
+      "min":20,
+      "pattern":"arn:aws:secretsmanager:.*:[0-9]+:.*",
+      "sensitive":true
+    },
     "ClientId":{
       "type":"string",
       "max":512,
@@ -490,7 +497,10 @@
         "Trendmicro":{"shape":"TrendmicroMetadata"},
         "Veeva":{"shape":"VeevaMetadata"},
         "Zendesk":{"shape":"ZendeskMetadata"},
-        "EventBridge":{"shape":"EventBridgeMetadata"}
+        "EventBridge":{"shape":"EventBridgeMetadata"},
+        "Upsolver":{"shape":"UpsolverMetadata"},
+        "CustomerProfiles":{"shape":"CustomerProfilesMetadata"},
+        "Honeycode":{"shape":"HoneycodeMetadata"}
       }
     },
     "ConnectorOAuthRequest":{
@@ -555,6 +565,7 @@
         "Datadog":{"shape":"DatadogConnectorProfileCredentials"},
         "Dynatrace":{"shape":"DynatraceConnectorProfileCredentials"},
         "GoogleAnalytics":{"shape":"GoogleAnalyticsConnectorProfileCredentials"},
+        "Honeycode":{"shape":"HoneycodeConnectorProfileCredentials"},
         "InforNexus":{"shape":"InforNexusConnectorProfileCredentials"},
         "Marketo":{"shape":"MarketoConnectorProfileCredentials"},
         "Redshift":{"shape":"RedshiftConnectorProfileCredentials"},
@@ -590,6 +601,7 @@
         "Datadog":{"shape":"DatadogConnectorProfileProperties"},
         "Dynatrace":{"shape":"DynatraceConnectorProfileProperties"},
         "GoogleAnalytics":{"shape":"GoogleAnalyticsConnectorProfileProperties"},
+        "Honeycode":{"shape":"HoneycodeConnectorProfileProperties"},
         "InforNexus":{"shape":"InforNexusConnectorProfileProperties"},
         "Marketo":{"shape":"MarketoConnectorProfileProperties"},
         "Redshift":{"shape":"RedshiftConnectorProfileProperties"},
@@ -630,7 +642,11 @@
         "Infornexus",
         "Amplitude",
         "Veeva",
-        "EventBridge"
+        "EventBridge",
+        "LookoutMetrics",
+        "Upsolver",
+        "Honeycode",
+        "CustomerProfiles"
       ]
     },
     "ConnectorTypeList":{
@@ -692,6 +708,19 @@
       "type":"string",
       "max":256,
       "pattern":"\\S+"
+    },
+    "CustomerProfilesDestinationProperties":{
+      "type":"structure",
+      "required":["domainName"],
+      "members":{
+        "domainName":{"shape":"DomainName"},
+        "objectTypeName":{"shape":"ObjectTypeName"}
+      }
+    },
+    "CustomerProfilesMetadata":{
+      "type":"structure",
+      "members":{
+      }
     },
     "DataPullMode":{
       "type":"string",
@@ -756,6 +785,11 @@
       }
     },
     "Date":{"type":"timestamp"},
+    "DatetimeTypeFieldName":{
+      "type":"string",
+      "max":256,
+      "pattern":".*"
+    },
     "DeleteConnectorProfileRequest":{
       "type":"structure",
       "required":["connectorProfileName"],
@@ -884,7 +918,12 @@
         "S3":{"shape":"S3DestinationProperties"},
         "Salesforce":{"shape":"SalesforceDestinationProperties"},
         "Snowflake":{"shape":"SnowflakeDestinationProperties"},
-        "EventBridge":{"shape":"EventBridgeDestinationProperties"}
+        "EventBridge":{"shape":"EventBridgeDestinationProperties"},
+        "LookoutMetrics":{"shape":"LookoutMetricsDestinationProperties"},
+        "Upsolver":{"shape":"UpsolverDestinationProperties"},
+        "Honeycode":{"shape":"HoneycodeDestinationProperties"},
+        "CustomerProfiles":{"shape":"CustomerProfilesDestinationProperties"},
+        "Zendesk":{"shape":"ZendeskDestinationProperties"}
       }
     },
     "DestinationField":{
@@ -897,7 +936,9 @@
       "members":{
         "isCreatable":{"shape":"Boolean"},
         "isNullable":{"shape":"Boolean"},
-        "isUpsertable":{"shape":"Boolean"}
+        "isUpsertable":{"shape":"Boolean"},
+        "isUpdatable":{"shape":"Boolean"},
+        "supportedWriteOperations":{"shape":"SupportedWriteOperationList"}
       }
     },
     "DestinationFlowConfig":{
@@ -915,6 +956,11 @@
     "DestinationFlowConfigList":{
       "type":"list",
       "member":{"shape":"DestinationFlowConfig"}
+    },
+    "DomainName":{
+      "type":"string",
+      "max":64,
+      "pattern":"\\S+"
     },
     "DynatraceConnectorOperator":{
       "type":"string",
@@ -1025,7 +1071,9 @@
         "executionStatus":{"shape":"ExecutionStatus"},
         "executionResult":{"shape":"ExecutionResult"},
         "startedAt":{"shape":"Date"},
-        "lastUpdatedAt":{"shape":"Date"}
+        "lastUpdatedAt":{"shape":"Date"},
+        "dataPullStartTime":{"shape":"Date"},
+        "dataPullEndTime":{"shape":"Date"}
       }
     },
     "ExecutionResult":{
@@ -1171,10 +1219,49 @@
       "max":128,
       "pattern":"\\S+"
     },
+    "HoneycodeConnectorProfileCredentials":{
+      "type":"structure",
+      "members":{
+        "accessToken":{"shape":"AccessToken"},
+        "refreshToken":{"shape":"RefreshToken"},
+        "oAuthRequest":{"shape":"ConnectorOAuthRequest"}
+      }
+    },
+    "HoneycodeConnectorProfileProperties":{
+      "type":"structure",
+      "members":{
+      }
+    },
+    "HoneycodeDestinationProperties":{
+      "type":"structure",
+      "required":["object"],
+      "members":{
+        "object":{"shape":"Object"},
+        "errorHandlingConfig":{"shape":"ErrorHandlingConfig"}
+      }
+    },
+    "HoneycodeMetadata":{
+      "type":"structure",
+      "members":{
+        "oAuthScopes":{"shape":"OAuthScopeList"}
+      }
+    },
+    "IdFieldNameList":{
+      "type":"list",
+      "member":{"shape":"Name"},
+      "max":1,
+      "min":0
+    },
     "Identifier":{
       "type":"string",
       "max":128,
       "pattern":"\\S+"
+    },
+    "IncrementalPullConfig":{
+      "type":"structure",
+      "members":{
+        "datetimeTypeFieldName":{"shape":"DatetimeTypeFieldName"}
+      }
     },
     "InforNexusConnectorOperator":{
       "type":"string",
@@ -1306,6 +1393,11 @@
       }
     },
     "Long":{"type":"long"},
+    "LookoutMetricsDestinationProperties":{
+      "type":"structure",
+      "members":{
+      }
+    },
     "MarketoConnectorOperator":{
       "type":"string",
       "enum":[
@@ -1393,6 +1485,11 @@
       "max":512,
       "pattern":"\\S+"
     },
+    "ObjectTypeName":{
+      "type":"string",
+      "max":255,
+      "pattern":"\\S+"
+    },
     "Operator":{
       "type":"string",
       "enum":[
@@ -1435,7 +1532,8 @@
         "TRUNCATE_LENGTH",
         "MATH_OPERATION_FIELDS_ORDER",
         "CONCAT_FORMAT",
-        "SUBFIELD_CATEGORY_MAP"
+        "SUBFIELD_CATEGORY_MAP",
+        "EXCLUDE_SOURCE_FIELDS_LIST"
       ]
     },
     "Password":{
@@ -1640,7 +1738,8 @@
       "members":{
         "accessToken":{"shape":"AccessToken"},
         "refreshToken":{"shape":"RefreshToken"},
-        "oAuthRequest":{"shape":"ConnectorOAuthRequest"}
+        "oAuthRequest":{"shape":"ConnectorOAuthRequest"},
+        "clientCredentialsArn":{"shape":"ClientCredentialsArn"}
       }
     },
     "SalesforceConnectorProfileProperties":{
@@ -1655,7 +1754,9 @@
       "required":["object"],
       "members":{
         "object":{"shape":"Object"},
-        "errorHandlingConfig":{"shape":"ErrorHandlingConfig"}
+        "idFieldNames":{"shape":"IdFieldNameList"},
+        "errorHandlingConfig":{"shape":"ErrorHandlingConfig"},
+        "writeOperationType":{"shape":"WriteOperationType"}
       }
     },
     "SalesforceMetadata":{
@@ -1689,6 +1790,11 @@
         "ONCE"
       ]
     },
+    "ScheduleOffset":{
+      "type":"long",
+      "max":36000,
+      "min":0
+    },
     "ScheduledTriggerProperties":{
       "type":"structure",
       "required":["scheduleExpression"],
@@ -1697,7 +1803,12 @@
         "dataPullMode":{"shape":"DataPullMode"},
         "scheduleStartTime":{"shape":"Date"},
         "scheduleEndTime":{"shape":"Date"},
-        "timezone":{"shape":"Timezone"}
+        "timezone":{"shape":"Timezone"},
+        "scheduleOffset":{
+          "shape":"ScheduleOffset",
+          "box":true
+        },
+        "firstExecutionFrom":{"shape":"Date"}
       }
     },
     "SchedulingFrequencyTypeList":{
@@ -1960,7 +2071,8 @@
       "members":{
         "connectorType":{"shape":"ConnectorType"},
         "connectorProfileName":{"shape":"ConnectorProfileName"},
-        "sourceConnectorProperties":{"shape":"SourceConnectorProperties"}
+        "sourceConnectorProperties":{"shape":"SourceConnectorProperties"},
+        "incrementalPullConfig":{"shape":"IncrementalPullConfig"}
       }
     },
     "Stage":{
@@ -1979,7 +2091,8 @@
       "type":"structure",
       "members":{
         "flowArn":{"shape":"FlowArn"},
-        "flowStatus":{"shape":"FlowStatus"}
+        "flowStatus":{"shape":"FlowStatus"},
+        "executionId":{"shape":"ExecutionId"}
       }
     },
     "StopFlowRequest":{
@@ -2011,6 +2124,10 @@
     "SupportedValueList":{
       "type":"list",
       "member":{"shape":"Value"}
+    },
+    "SupportedWriteOperationList":{
+      "type":"list",
+      "member":{"shape":"WriteOperationType"}
     },
     "TagKey":{
       "type":"string",
@@ -2081,6 +2198,7 @@
         "Arithmetic",
         "Filter",
         "Map",
+        "Map_all",
         "Mask",
         "Merge",
         "Truncate",
@@ -2093,7 +2211,8 @@
     },
     "Timezone":{
       "type":"string",
-      "max":256
+      "max":256,
+      "pattern":".*"
     },
     "TrendmicroConnectorOperator":{
       "type":"string",
@@ -2243,6 +2362,38 @@
       "max":256,
       "pattern":"\\S+"
     },
+    "UpsolverBucketName":{
+      "type":"string",
+      "max":63,
+      "min":16,
+      "pattern":"^(upsolver-appflow)\\S*"
+    },
+    "UpsolverDestinationProperties":{
+      "type":"structure",
+      "required":[
+        "bucketName",
+        "s3OutputFormatConfig"
+      ],
+      "members":{
+        "bucketName":{"shape":"UpsolverBucketName"},
+        "bucketPrefix":{"shape":"BucketPrefix"},
+        "s3OutputFormatConfig":{"shape":"UpsolverS3OutputFormatConfig"}
+      }
+    },
+    "UpsolverMetadata":{
+      "type":"structure",
+      "members":{
+      }
+    },
+    "UpsolverS3OutputFormatConfig":{
+      "type":"structure",
+      "required":["prefixConfig"],
+      "members":{
+        "fileType":{"shape":"FileType"},
+        "prefixConfig":{"shape":"PrefixConfig"},
+        "aggregationConfig":{"shape":"AggregationConfig"}
+      }
+    },
     "Username":{
       "type":"string",
       "max":512,
@@ -2322,6 +2473,14 @@
       "max":512,
       "pattern":"[\\s\\w/!@#+=.-]*"
     },
+    "WriteOperationType":{
+      "type":"string",
+      "enum":[
+        "INSERT",
+        "UPSERT",
+        "UPDATE"
+      ]
+    },
     "ZendeskConnectorOperator":{
       "type":"string",
       "enum":[
@@ -2359,6 +2518,16 @@
       "required":["instanceUrl"],
       "members":{
         "instanceUrl":{"shape":"InstanceUrl"}
+      }
+    },
+    "ZendeskDestinationProperties":{
+      "type":"structure",
+      "required":["object"],
+      "members":{
+        "object":{"shape":"Object"},
+        "idFieldNames":{"shape":"IdFieldNameList"},
+        "errorHandlingConfig":{"shape":"ErrorHandlingConfig"},
+        "writeOperationType":{"shape":"WriteOperationType"}
       }
     },
     "ZendeskMetadata":{

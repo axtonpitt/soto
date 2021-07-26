@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Create a report to help us improve the functionality of AWSSDKSwift!
+about: Create a report to help us improve the functionality of Soto!
 title: ''
 labels: ''
 assignees: ''
@@ -19,9 +19,9 @@ Steps to reproduce the behavior:
 A clear and concise description of what you expected to happen.
 
 **Setup (please complete the following information):**
- - OS: [e.g. iOS]
- - Version of aws-sdk-swift [e.g. 3.0]
+ - OS:
+ - Version of soto:
  - Authentication mechanism [hard-coded credentials, IAM Instance Profile on EC2, etc]
 
 **Additional context**
-Add any other context about the problem here.
+Add any other context about the problem here. If this a bug related to a command not working can you run the same command on a client initialised with the logging middleware. eg `S3(region: .useast1).with(middlewares: [AWSLoggingMiddleware()])`

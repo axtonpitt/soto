@@ -424,7 +424,13 @@
     "Boolean":{"type":"boolean"},
     "CLMLanguageCode":{
       "type":"string",
-      "enum":["en-US"]
+      "enum":[
+        "en-US",
+        "hi-IN",
+        "es-US",
+        "en-GB",
+        "en-AU"
+      ]
     },
     "ConflictException":{
       "type":"structure",
@@ -677,6 +683,7 @@
         "DownloadUri":{"shape":"Uri"}
       }
     },
+    "IdentifiedLanguageScore":{"type":"float"},
     "InputDataConfig":{
       "type":"structure",
       "required":[
@@ -764,6 +771,11 @@
         "FailureReason":{"shape":"FailureReason"},
         "InputDataConfig":{"shape":"InputDataConfig"}
       }
+    },
+    "LanguageOptions":{
+      "type":"list",
+      "member":{"shape":"LanguageCode"},
+      "min":2
     },
     "LimitExceededException":{
       "type":"structure",
@@ -898,13 +910,20 @@
         "mp3",
         "mp4",
         "wav",
-        "flac"
+        "flac",
+        "ogg",
+        "amr",
+        "webm"
       ]
     },
     "MediaSampleRateHertz":{
       "type":"integer",
       "max":48000,
       "min":8000
+    },
+    "MedicalContentIdentificationType":{
+      "type":"string",
+      "enum":["PHI"]
     },
     "MedicalTranscript":{
       "type":"structure",
@@ -927,6 +946,7 @@
         "CompletionTime":{"shape":"DateTime"},
         "FailureReason":{"shape":"FailureReason"},
         "Settings":{"shape":"MedicalTranscriptionSetting"},
+        "ContentIdentificationType":{"shape":"MedicalContentIdentificationType"},
         "Specialty":{"shape":"Specialty"},
         "Type":{"shape":"Type"}
       }
@@ -947,6 +967,7 @@
         "FailureReason":{"shape":"FailureReason"},
         "OutputLocationType":{"shape":"OutputLocationType"},
         "Specialty":{"shape":"Specialty"},
+        "ContentIdentificationType":{"shape":"MedicalContentIdentificationType"},
         "Type":{"shape":"Type"}
       }
     },
@@ -1001,6 +1022,12 @@
       "type":"string",
       "max":64,
       "pattern":"[a-z0-9][\\.\\-a-z0-9]{1,61}[a-z0-9]"
+    },
+    "OutputKey":{
+      "type":"string",
+      "max":1024,
+      "min":1,
+      "pattern":"[a-zA-Z0-9-_.!*'()/]{1,1024}$"
     },
     "OutputLocationType":{
       "type":"string",
@@ -1064,8 +1091,10 @@
         "MediaFormat":{"shape":"MediaFormat"},
         "Media":{"shape":"Media"},
         "OutputBucketName":{"shape":"OutputBucketName"},
+        "OutputKey":{"shape":"OutputKey"},
         "OutputEncryptionKMSKeyId":{"shape":"KMSKeyId"},
         "Settings":{"shape":"MedicalTranscriptionSetting"},
+        "ContentIdentificationType":{"shape":"MedicalContentIdentificationType"},
         "Specialty":{"shape":"Specialty"},
         "Type":{"shape":"Type"}
       }
@@ -1080,7 +1109,6 @@
       "type":"structure",
       "required":[
         "TranscriptionJobName",
-        "LanguageCode",
         "Media"
       ],
       "members":{
@@ -1090,11 +1118,14 @@
         "MediaFormat":{"shape":"MediaFormat"},
         "Media":{"shape":"Media"},
         "OutputBucketName":{"shape":"OutputBucketName"},
+        "OutputKey":{"shape":"OutputKey"},
         "OutputEncryptionKMSKeyId":{"shape":"KMSKeyId"},
         "Settings":{"shape":"Settings"},
         "ModelSettings":{"shape":"ModelSettings"},
         "JobExecutionSettings":{"shape":"JobExecutionSettings"},
-        "ContentRedaction":{"shape":"ContentRedaction"}
+        "ContentRedaction":{"shape":"ContentRedaction"},
+        "IdentifyLanguage":{"shape":"Boolean"},
+        "LanguageOptions":{"shape":"LanguageOptions"}
       }
     },
     "StartTranscriptionJobResponse":{
@@ -1128,7 +1159,10 @@
         "Settings":{"shape":"Settings"},
         "ModelSettings":{"shape":"ModelSettings"},
         "JobExecutionSettings":{"shape":"JobExecutionSettings"},
-        "ContentRedaction":{"shape":"ContentRedaction"}
+        "ContentRedaction":{"shape":"ContentRedaction"},
+        "IdentifyLanguage":{"shape":"Boolean"},
+        "LanguageOptions":{"shape":"LanguageOptions"},
+        "IdentifiedLanguageScore":{"shape":"IdentifiedLanguageScore"}
       }
     },
     "TranscriptionJobName":{
@@ -1162,7 +1196,9 @@
         "FailureReason":{"shape":"FailureReason"},
         "OutputLocationType":{"shape":"OutputLocationType"},
         "ContentRedaction":{"shape":"ContentRedaction"},
-        "ModelSettings":{"shape":"ModelSettings"}
+        "ModelSettings":{"shape":"ModelSettings"},
+        "IdentifyLanguage":{"shape":"Boolean"},
+        "IdentifiedLanguageScore":{"shape":"IdentifiedLanguageScore"}
       }
     },
     "Type":{
@@ -1254,7 +1290,8 @@
       "type":"string",
       "enum":[
         "remove",
-        "mask"
+        "mask",
+        "tag"
       ]
     },
     "VocabularyFilterName":{

@@ -1,12 +1,13 @@
-import XCTest
-@testable import AWSSDKSwiftTests
-
-XCTMain([
-     testCase(APIGatewayTests.allTests),
-     testCase(AWSRequestTests.allTests),
-     testCase(IAMTests.allTests),
-     testCase(DynamoDBTests.allTests),
-     testCase(S3Tests.allTests),
-     testCase(SNSTests.allTests),
-     testCase(SQSTests.allTests),
-])
+//===----------------------------------------------------------------------===//
+//
+// This source file is part of the Soto for AWS open source project
+//
+// Copyright (c) 2020 the Soto project authors
+// Licensed under Apache License v2.0
+//
+// See LICENSE.txt for license information
+// See CONTRIBUTORS.txt for the list of Soto project authors
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+//===----------------------------------------------------------------------===//

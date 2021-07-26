@@ -3717,6 +3717,9 @@
         },
         {
           "shape": "TooManyRequestsException"
+        },
+        {
+          "shape": "ConflictException"
         }
       ]
     },
@@ -4807,7 +4810,12 @@
       "type": "string",
       "enum": [
         "INCLUSIVE",
-        "EXCLUSIVE"
+        "EXCLUSIVE",
+        "CONTAINS",
+        "BEFORE",
+        "AFTER",
+        "BETWEEN",
+        "ON"
       ]
     },
     "AttributesResource": {
@@ -5162,7 +5170,16 @@
         "MessageType": {
           "shape": "MessageType"
         },
+        "OriginationNumber": {
+          "shape": "__string"
+        },
         "SenderId": {
+          "shape": "__string"
+        },
+        "EntityId": {
+          "shape": "__string"
+        },
+        "TemplateId": {
           "shape": "__string"
         }
       }
@@ -5183,7 +5200,8 @@
         "PENDING_NEXT_RUN",
         "COMPLETED",
         "PAUSED",
-        "DELETED"
+        "DELETED",
+        "INVALID"
       ]
     },
     "CampaignsResponse": {
@@ -5286,6 +5304,21 @@
         "TrueActivity": {
           "shape": "__string"
         }
+      }
+    },
+    "ConflictException": {
+      "type": "structure",
+      "members": {
+        "Message": {
+          "shape": "__string"
+        },
+        "RequestID": {
+          "shape": "__string"
+        }
+      },
+      "exception": true,
+      "error": {
+        "httpStatusCode": 409
       }
     },
     "CreateAppRequest": {
@@ -6943,10 +6976,7 @@
         "MessageActivity": {
           "shape": "__string"
         }
-      },
-      "required": [
-        "Dimensions"
-      ]
+      }
     },
     "EventDimensions": {
       "type": "structure",
@@ -6962,6 +6992,21 @@
         }
       }
     },
+    "EventFilter": {
+      "type": "structure",
+      "members": {
+        "Dimensions": {
+          "shape": "EventDimensions"
+        },
+        "FilterType": {
+          "shape": "FilterType"
+        }
+      },
+      "required": [
+        "FilterType",
+        "Dimensions"
+      ]
+    },
     "EventItemResponse": {
       "type": "structure",
       "members": {
@@ -6970,6 +7015,17 @@
         },
         "StatusCode": {
           "shape": "__integer"
+        }
+      }
+    },
+    "EventStartCondition": {
+      "type": "structure",
+      "members": {
+        "EventFilter": {
+          "shape": "EventFilter"
+        },
+        "SegmentId": {
+          "shape": "__string"
         }
       }
     },
@@ -9073,6 +9129,9 @@
         },
         "MessagesPerSecond": {
           "shape": "__integer"
+        },
+        "EndpointReentryInterval": {
+            "shape": "__string"
         }
       }
     },
@@ -9146,7 +9205,16 @@
         "MessageType": {
           "shape": "MessageType"
         },
+        "OriginationNumber": {
+          "shape": "__string"
+        },
         "SenderId": {
+          "shape": "__string"
+        },
+        "EntityId": {
+          "shape": "__string"
+        },
+        "TemplateId": {
           "shape": "__string"
         }
       }
@@ -10151,6 +10219,12 @@
         },
         "Substitutions": {
           "shape": "MapOfListOf__string"
+        },
+        "EntityId": {
+          "shape": "__string"
+        },
+        "TemplateId": {
+          "shape": "__string"
         }
       }
     },
@@ -10674,6 +10748,9 @@
         "Description": {
           "shape": "__string"
         },
+        "EventStartCondition": {
+          "shape": "EventStartCondition"
+        },
         "SegmentStartCondition": {
           "shape": "SegmentCondition"
         }
@@ -10686,7 +10763,8 @@
         "ACTIVE",
         "COMPLETED",
         "CANCELLED",
-        "CLOSED"
+        "CLOSED",
+        "PAUSED"
       ]
     },
     "TagResourceRequest": {
@@ -12041,6 +12119,12 @@
         },
         "State": {
           "shape": "State"
+        },
+        "WaitForQuietTime": {
+            "shape": "__boolean"
+        },
+        "RefreshOnSegmentUpdate": {
+            "shape": "__boolean"
         }
       },
       "required": [

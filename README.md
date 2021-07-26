@@ -1,109 +1,91 @@
-# AWS SDK Swift
+# Soto for AWS
 
-AWS SDK for the Swift programming language working on Linux, macOS and iOS.
+[<img src="http://img.shields.io/badge/swift-5.2-brightgreen.svg" alt="Swift 5.2" />](https://swift.org)
+[<img src="https://github.com/soto-project/soto/workflows/CI/badge.svg" />](https://github.com/soto-project/soto/actions?query=workflow%3ACI)
+[![sswg:sandbox|94x20](https://img.shields.io/badge/sswg-sandbox-lightgrey.svg)](https://github.com/swift-server/sswg/blob/master/process/incubation.md#sandbox-level)
 
-[<img src="http://img.shields.io/badge/swift-5.0-brightgreen.svg" alt="Swift 5.0" />](https://swift.org)
-[<img src="http://img.shields.io/badge/swift-5.1-brightgreen.svg" alt="Swift 5.1" />](https://swift.org)
-[<img src="https://github.com/swift-aws/aws-sdk-swift/workflows/Swift/badge.svg" />](https://github.com/swift-aws/aws-sdk-swift/actions)
+Soto is a Swift language SDK for Amazon Web Services (AWS), working on Linux, macOS and iOS. This library provides access to all AWS services. The service APIs it provides are a direct mapping of the REST APIs Amazon publishes for each of its services. Soto is a community supported project and is in no way affiliated with AWS.
 
+Table of Contents
+-----------------
 
-## Compatibility
+- [Structure](#structure)
+- [Swift Package Manager](#swift-package-manager)
+- [Compatibility](#compatibility)
+- [Configuring Credentials](#configuring-credentials)
+- [Using Soto](#using-soto)
+- [Documentation](#documentation)
+    - [API Reference](#api-reference)
+    - [User guides](#user-guides)
+- [Contributing](#contributing)
+- [License](#license)
 
-AWSSDKSwift works on Linux, macOS and iOS. Version 4 is dependent on [swift-nio](https://github.com/apple/swift-nio) 2. Libraries/frameworks that are dependent on an earlier version of swift-nio will not work with version 4 of AWSSDKSwift. In this case Version 3 can be used. For example Vapor 3 uses swift-nio 1.13 so you can only use versions 3.x of AWSSDKSwift with Vapor 3. Below is a compatibility table for versions 3 and 4 of AWSSDKSwift.
+## Structure
 
-| Version | Swift | MacOS | iOS    | Linux              | Vapor  |
-|---------|-------|-------|--------|--------------------|--------|
-| 3.x     | 4.2 - | ✓     |        | Ubuntu 14.04-18.04 | 3.0    |
-| 4.x     | 5.0 - | ✓     | 12.0 - | Ubuntu 14.04-18.04 | 4.0    |
+The library consists of three parts
+1. [soto-core](https://github.com/soto-project/soto-core) which does all the core request encoding and signing, response decoding and error handling.
+2. The service [api files](https://github.com/soto-project/soto/tree/main/Sources/Soto/Services) which define the individual AWS services and their commands with their input and output structures.
+3. The [CodeGenerator](https://github.com/soto-project/soto/tree/main/CodeGenerator) which builds the service api files from the [JSON model](https://github.com/soto-project/soto/tree/main/models/apis) files supplied by Amazon.
 
-## Documentation
+## Swift Package Manager
 
-Visit the `aws-sdk-swift` [documentation](https://swift-aws.github.io/aws-sdk-swift/index.html) to browse the api reference.
-
-## Installation
-
-### Swift Package Manager
-
-AWSSDKSwift uses the Swift Package Manager to manage its code dependencies. To use AWSSDKSwift in your codebase it is recommended you do the same. Add a dependency to the package in your own Package.swift dependencies.
+Soto uses the Swift Package Manager to manage its code dependencies. To use Soto in your codebase it is recommended you do the same. Add a dependency to the package in your own Package.swift dependencies.
 ```swift
     dependencies: [
-        .package(url: "https://github.com/swift-aws/aws-sdk-swift.git", from: "4.0.0")
+        .package(url: "https://github.com/soto-project/soto.git", from: "5.0.0")
     ],
 ```
-Then add target dependencies for each of the AWSSDKSwift targets you want to use.
+Then add target dependencies for each of the Soto targets you want to use.
 ```swift
     targets: [
-      .target(name: "MyAWSApp", dependencies: ["S3", "SES", "CloudFront", "ELBV2", "IAM", "Kinesis"]),
+        .target(name: "MyApp", dependencies: [
+            .product(name: "SotoS3", package: "soto"),
+            .product(name: "SotoSES", package: "soto"),
+            .product(name: "SotoIAM", package: "soto")
+        ]),
     ]
 )
 ```
-Alternatively if you are using Xcode 11+ you can use the Swift Package integration and add a dependency to AWSSDKSwift through that.
+Alternatively if you are using Xcode 11 or later you can use the Swift Package Manager integration and add a dependency to Soto through that.
+
+## Compatibility
+
+Soto works on Linux, macOS and iOS. It requires v2.0 of [Swift NIO](https://github.com/apple/swift-nio). If you use v1.0 of Swift NIO then you will need to use v3.5 of Soto. Below is a compatibility table for different Soto versions.
+
+| Version | Swift | MacOS | iOS    | Linux              | Vapor  |
+|---------|-------|-------|--------|--------------------|--------|
+| 5.x     | 5.2 - | ✓     | 12.0 - | Ubuntu 18.04-20.04 | 4.0    |
+| 4.x     | 5.0 - | ✓     | 12.0 - | Ubuntu 18.04-20.04 | 4.0    |
 
 ## Configuring Credentials
 
-Before using the SDK, you will need AWS credentials to sign all your requests. Credentials can be provided in the following ways.
+Before using the SDK, you will need AWS credentials to sign all your requests. Credentials can be provided to the library in the following ways.
+- Environment variables `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`
+- ECS container IAM policy
+- EC2 IAM instance profile
+- Shared credentials file in your home directory
+- Static credentials provided at runtime
 
-### Via EC2 Instance Profile
+You can find out more about credential providers [here](https://soto.codes/user-guides/credential-providers.html)
 
-If you are running your code on an AWS EC2 instance, you [can setup an IAM role as the server's Instance Profile](https://docs.aws.amazon.com/codedeploy/latest/userguide/getting-started-create-iam-instance-profile.html) to automatically grant credentials via the metadata service.
+## Using Soto
 
-There are no code changes or configurations to specify in the code, it will automatically pull and use them.
+To use Soto you need to create an `AWSClient` and a service object for the AWS service you want to work with. The `AWSClient` provides all the communication with AWS and the service object provides the configuration and APIs for communicating with a specific AWS service. More can be found out about `AWSClient` [here](https://soto.codes/user-guides/awsclient.html) and the AWS service objects [here](https://soto.codes/user-guides/service-objects.html).
 
-### Via ECS Container credentials
+Each Soto command returns a [Swift NIO](https://github.com/apple/swift-nio) `EventLoopFuture`. An `EventLoopFuture` _is not_ the response of the command, but rather a container object that will be populated with the response at a later point. In this manner calls to AWS do not block the main thread. It is recommended you familiarise yourself with the Swift NIO [documentation](https://apple.github.io/swift-nio/docs/current/NIO/), specifically [EventLoopFuture](https://apple.github.io/swift-nio/docs/current/NIO/Classes/EventLoopFuture.html) if you want to take full advantage of Soto.
 
-If you are running your code as an AWS ECS container task, you [can setup an IAM role for your container task](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task-iam-roles.html#create_task_iam_policy_and_role) to automatically grant credentials via the metadata service.
-
-There are no code changes or configurations to specify in the code, it will automatically pull and use them.
-
-### Load Credentials from shared credential file.
-
-You can [set shared credentials in the home directory for the user running the app](https://docs.aws.amazon.com/ses/latest/DeveloperGuide/create-shared-credentials-file.html)
-
-in ~/.aws/credentials,
-
-```ini
-[default]
-aws_access_key_id = YOUR_AWS_ACCESS_KEY_ID
-aws_secret_access_key = YOUR_AWS_SECRET_ACCESS_KEY
-```
-
-### Load Credentials from Environment Variable
-
-Alternatively, you can set the following environment variables:
-
-```bash
-AWS_ACCESS_KEY_ID=YOUR_AWS_ACCESS_KEY_ID
-AWS_SECRET_ACCESS_KEY=YOUR_AWS_SECRET_ACCESS_KEY
-```
-
-### Pass the Credentials to the AWS Service struct directly
-
-All of the AWS Services's initializers accept `accessKeyId` and `secretAccessKey`
+The recommended manner to interact with `EventLoopFutures` is chaining. The following function returns an `EventLoopFuture` that creates an S3 bucket, puts a file in the bucket, reads the file back from the bucket and finally prints the contents of the file. Each of these operations are chained together. The output of one being the input of the next.
 
 ```swift
-let ec2 = EC2(
-    accessKeyId: "YOUR_AWS_ACCESS_KEY_ID",
-    secretAccessKey: "YOUR_AWS_SECRET_ACCESS_KEY"
-)
-```
-### Without Credentials
-
-Some services like CognitoIdentityProvider don't require credentials to access some of their functions. Explicitly set `accessKeyId` and `secretAccessKey` to "". This will disable all other credential access functions and send requests unsigned.
-
-## Using `aws-sdk-swift`
-
-AWS Swift Modules can be imported into any swift project. Each module provides a struct that can be initialized, with instance methods to call aws services. See documentation for details on specific services.
-
-The underlying aws-sdk-swift httpclient returns a [swift-nio EventLoopFuture object](https://apple.github.io/swift-nio/docs/current/NIO/Classes/EventLoopFuture.html). An EventLoopFuture _is not_ the response, but rather a container object that will be populated with the response sometime later. In this manner calls to AWS do not block the main thread.
-
-The recommended manner to interact with futures is chaining. The following function returns an EventLoopFuture that creates an S3 bucket, puts a file in the bucket, reads the file back from the bucket and finally prints the contents of the file. Each of these operations are chained together. The output of one being the input of the next. 
-
-```swift
-import S3 //ensure this module is specified as a dependency in your package.swift
+import SotoS3 //ensure this module is specified as a dependency in your package.swift
 
 let bucket = "my-bucket"
 
-let s3 = S3(accessKeyId: "Your-Access-Key", secretAccessKey: "Your-Secret-Key", region: .uswest2)
+let client = AWSClient(
+    credentialProvider: .static(accessKeyId: "Your-Access-Key", secretAccessKey: "Your-Secret-Key"),
+    httpClientProvider: .createNew
+)
+let s3 = S3(client: client, region: .uswest2)
 
 func createBucketPutGetObject() -> EventLoopFuture<S3.GetObjectOutput> {
     // Create Bucket, Put an Object, Get the Object
@@ -113,7 +95,12 @@ func createBucketPutGetObject() -> EventLoopFuture<S3.GetObjectOutput> {
         .flatMap { response -> EventLoopFuture<S3.PutObjectOutput> in
             // Upload text file to the s3
             let bodyData = "hello world".data(using: .utf8)!
-            let putObjectRequest = S3.PutObjectRequest(acl: .publicRead, body: bodyData, bucket: bucket, contentLength: Int64(bodyData.count), key: "hello.txt")
+            let putObjectRequest = S3.PutObjectRequest(
+                acl: .publicRead,
+                body: bodyData,
+                bucket: bucket,
+                key: "hello.txt"
+            )
             return s3.putObject(putObjectRequest)
         }
         .flatMap { response -> EventLoopFuture<S3.GetObjectOutput> in
@@ -128,79 +115,46 @@ func createBucketPutGetObject() -> EventLoopFuture<S3.GetObjectOutput> {
 }
 ```
 
-## upgrading from <3.0.x
+## Documentation
 
-The simplest way to upgrade from an existing 1.0 or 2.0 implementation is to call `.wait()` on existing synchronous calls. However it is recommend to rewrite your synchronous code to work with the returned future objects. It is no longer necessary to use a DispatchQueue.
+### API Reference
 
-## EventLoopGroup management
+Visit [soto.codes](https://soto.codes) to browse the user guides and api reference. As there is a one-to-one correspondence with AWS REST api calls and the Soto api calls, you can also use the official AWS [documentation](https://docs.aws.amazon.com/) for more detailed information about AWS commands.
 
-The AWS SDK has its own `EventLoopGroup` but it is recommended that you provide your own `EventLoopGroup` for the SDK to work off. You can do this when you construct your client.
-```
-let s3 = S3(region:.uswest2, eventLoopGroupProvider: .shared(myEventLoopGroup)
-```
-The EventLoopGroup types you can use depend on the platform you are running on. On Linux use `MultiThreadedEventLoopGroup`, on macOS use `MultiThreadedEventLoopGroup` or `NIOTSEventLoopGroup` and iOS use `NIOTSEventLoopGroup`. Using the `NIOTSEventLoopGroup` will mean you use [NIO Transport Services](https://github.com/apple/swift-nio-transport-services) and the Apple Network framework.
+### User guides
 
-## Using `aws-sdk-swift` with Vapor
+Additional user guides for specific elements of Soto are available
 
-Integration with Vapor is pretty straight forward. Although be sure you use the correct version of AWSSDKSwift depending on which version of Vapor you are using. See the compatibility section for details. Below is a simple Vapor 3 example that extracts an email address, subject and message from a request and then sends an email using these details. Take note of the `hopTo(eventLoop:)` call. If your AWS SDK is not working off the same `EventLoopGroup` as the Vapor `Request` this is a requirement.
+- [Upgrading to Soto v5](https://soto.codes/2020/12/upgrading-to-v5.html)
+- [AWSClient](https://soto.codes/user-guides/awsclient.html)
+- [AWS Service Objects](https://soto.codes/user-guides/service-objects.html)
+- [Credential Providers](https://soto.codes/user-guides/credential-providers.html)
+- [Error Handling](https://soto.codes/user-guides/error-handling.html)
+- [Streaming Payloads](https://soto.codes/user-guides/streaming-payloads.html)
+- [DynamoDB and Codable](https://soto.codes/user-guides/dynamodb-and-codable.html)
+- [S3 Multipart Upload](https://soto.codes/user-guides/s3-multipart-upload.html)
+- [Using Soto on AWS Lambda](https://soto.codes/user-guides/using-soto-on-aws-lambda.html)
+- [Using Soto with Vapor 4](https://soto.codes/user-guides/using-soto-with-vapor.html)
 
-```swift
-import Vapor
-import HTTP
-import SES
+## Contributing
 
-final class MyController {
-    struct EmailData: Content {
-        let address: String
-        let subject: String
-        let message: String
-    }
-    func sendUserEmailFromJSON(_ req: Request) throws -> EventLoopFuture<HTTPStatus> {
-        return try req.content.decode(EmailData.self)
-            .flatMap { (emailData)->EventLoopFuture<SES.SendEmailResponse> in
-                let client = SES(region: .uswest1)
-
-                let destination = SES.Destination(toAddresses: [emailData.address])
-                let message = SES.Message(body:SES.Body(text:SES.Content(data:emailData.message)), subject:SES.Content(data:emailData.subject))
-                let sendEmailRequest = SES.SendEmailRequest(destination: destination, message: message, source:"awssdkswift@me.com")
-
-                return client.sendEmail(sendEmailRequest)
-            }
-            .hopTo(eventLoop: req.eventLoop)
-            .map { response -> HTTPResponseStatus in
-                return HTTPStatus.ok
-        }
-    }
-}
-```
-<!--
-## Using the `aws-sdk-swift` with the swift REPL (macOS)
-
-
-```swift
-
-$ swift -I .build/debug
-1> import Foundation
-2> import S3
-
-let bucket = "my-bucket"
-
-let s3 = S3(accessKeyId: "Your-Access-Key", secretAccessKey: "Your-Secret-Key", region: .uswest1)
-
-// Create Bucket, Put an Object, Get the Object
-let createBucketRequest = S3.CreateBucketRequest(bucket: bucket)
-
-s3.createBucket(createBucketRequest).whenSuccess { response in
-    print(response)
-}
-
-```
--->
-## Speed Up Compilation
-
-By specifying only those modules necessary for your application, only those modules will compile which makes for fast compilation.
-
-If you want to create a module for your service, you can try using the module-exporter to build a separate repo for any of the modules.
+We welcome and encourage contributions from all developers. Please read [CONTRIBUTING.md](CONTRIBUTING.md) for our contributing guidelines.
 
 ## License
-`aws-sdk-swift` is released under the [Apache License, Version 2.0](http://www.apache.org/licenses/LICENSE-2.0). See LICENSE for details.
+Soto is released under the [Apache License, Version 2.0](http://www.apache.org/licenses/LICENSE-2.0). See LICENSE for details.
+
+## Backers
+Support development of Soto by becoming a [backer](https://github.com/sponsors/adam-fowler)
+
+<a href="https://github.com/0xTim">
+    <img src="https://avatars1.githubusercontent.com/u/9938337?s=120" width="60px">
+</a>
+<a href="https://github.com/bitwit">
+    <img src="https://avatars1.githubusercontent.com/u/707507?s=120" width="60px">
+</a>
+<a href="https://github.com/slashmo">
+    <img src="https://avatars1.githubusercontent.com/u/16192401?s=120" width="60px">
+</a>
+<a href="https://github.com/sudhirj">
+    <img src="https://avatars1.githubusercontent.com/u/21678?s=120" width="60px">
+</a>

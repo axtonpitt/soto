@@ -1,12 +1,25 @@
 #!/bin/sh
+##===----------------------------------------------------------------------===##
+##
+## This source file is part of the Soto for AWS open source project
+##
+## Copyright (c) 2020 the Soto project authors
+## Licensed under Apache License v2.0
+##
+## See LICENSE.txt for license information
+## See CONTRIBUTORS.txt for the list of Soto project authors
+##
+## SPDX-License-Identifier: Apache-2.0
+##
+##===----------------------------------------------------------------------===##
 
-set -eux
+set -eu
 
 TEMP_DIR=""
 
 usage()
 {
-    echo "Usage: update_models.sh -c [ -v MODELS_VERSION_NUMBER ]"
+    echo "Usage: update_models.sh -bupc [ -v MODELS_VERSION_NUMBER ]"
     exit 2
 }
 
@@ -44,15 +57,17 @@ copy_model_files()
 build_files()
 {
     # build the code generator and run it
-    echo "Build the code generator"
+    echo "Build and run the code generator"
     CURRENT_FOLDER=$(pwd)
     cd "$CURRENT_FOLDER"/CodeGenerator
-    swift build
-    echo "Run the code generator"
-    swift run
+    swift run -c release soto-codegenerator --format
+    cd "$CURRENT_FOLDER"
+}
+
+compile_files()
+{
     echo "Compile service files"
     # build services after having generated the files
-    cd "$CURRENT_FOLDER"
     swift build
 }
 
@@ -60,8 +75,11 @@ check_for_local_changes()
 {
     LOCAL_CHANGES=$(git status --porcelain)
     if [ -n "$LOCAL_CHANGES" ]; then
-        printf "You have local changes.\nPlease stash your local changes before continuing."
-        usage
+        echo "You have local changes."
+        read -p "Are you sure you want to continue [y/n]? " answer
+        if [ "$answer" != "y" ]; then
+            exit
+        fi
     fi
 }
 
@@ -72,7 +90,7 @@ commit_changes()
     BRANCH_NAME="aws-sdk-go-$MODELS_VERSION"
     git checkout -b $BRANCH_NAME
     git add models
-    git add Sources/AWSSDKSwift
+    git add Sources/Soto
     git commit -m "$COMMIT_MSG"
 }
 
@@ -84,11 +102,15 @@ cleanup()
 }
 
 AWS_MODELS_VERSION=""
+COMPILE_FILES=""
+DONT_COMMIT=""
 
-while getopts 'cv:' option
+while getopts 'bcv:' option
 do
     case $option in
         v) AWS_MODELS_VERSION=$OPTARG ;;
+        c) COMPILE_FILES=1 ;;
+        b) DONT_COMMIT=1 ;;
         *) usage ;;
     esac
 done
@@ -105,9 +127,17 @@ echo "Get aws-sdk-go models"
 AWS_SDK_GO=$TEMP_DIR/aws-sdk-go/
 AWS_MODELS_VERSION=$(get_aws_sdk_go "$AWS_SDK_GO" "$AWS_MODELS_VERSION")
 
-echo "Copy models to aws-sdk-swift"
+# required by update_models.yml to extract the version number of the models
+echo "AWS_MODELS_VERSION=$AWS_MODELS_VERSION"
+echo "Copy models to soto"
 AWS_SDK_GO_MODELS=$AWS_SDK_GO/models
 TARGET_MODELS=models
 copy_model_files "$AWS_SDK_GO_MODELS" "$TARGET_MODELS"
+
 build_files
-commit_changes "$AWS_MODELS_VERSION"
+if [ -n "$COMPILE_FILES" ]; then
+    compile_files
+fi
+if [ -z "$DONT_COMMIT" ]; then
+    commit_changes "$AWS_MODELS_VERSION"
+fi
