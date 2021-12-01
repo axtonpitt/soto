@@ -23,7 +23,7 @@ let package = Package(
         .library(name: "SotoSESV2", targets: ["SotoSESV2"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/soto-project/soto-core.git", .branch("main"))
+        .package(url: "https://github.com/soto-project/soto-core.git", .exact("5.8.0"))
     ],
     targets: [
         .target(name: "SotoS3", dependencies: [.product(name: "SotoCore", package: "soto-core"), .byName(name: "CSotoZlib")], path: "./Sources/Soto/", sources: ["Services/S3", "Extensions/S3"]),
