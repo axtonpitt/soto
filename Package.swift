@@ -21,6 +21,7 @@ let package = Package(
     products: [
         .library(name: "SotoS3", targets: ["SotoS3"]),
         .library(name: "SotoSESV2", targets: ["SotoSESV2"]),
+        .library(name: "SotoCognitoIdentity", targets: ["SotoCognitoIdentity"]),
         .library(name: "SotoCognitoIdentityProvider", targets: ["SotoCognitoIdentityProvider"]),
     ],
     dependencies: [
@@ -29,6 +30,7 @@ let package = Package(
     targets: [
         .target(name: "SotoS3", dependencies: [.product(name: "SotoCore", package: "soto-core"), .byName(name: "CSotoZlib")], path: "./Sources/Soto/", sources: ["Services/S3", "Extensions/S3"]),
         .target(name: "SotoSESV2", dependencies: [.product(name: "SotoCore", package: "soto-core")], path: "./Sources/Soto/Services/SESV2"),
+        .target(name: "SotoCognitoIdentity", dependencies: [.product(name: "SotoCore", package: "soto-core")], path: "./Sources/Soto/", sources: ["Services/CognitoIdentity", "Extensions/CognitoIdentity"]),
         .target(name: "SotoCognitoIdentityProvider", dependencies: [.product(name: "SotoCore", package: "soto-core")], path: "./Sources/Soto/Services/CognitoIdentityProvider"),
         .target(name: "CSotoZlib", linkerSettings: [.linkedLibrary("z")])
     ]
