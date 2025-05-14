@@ -12,10 +12,11 @@
 //
 //===----------------------------------------------------------------------===//
 
+import AsyncHTTPClient
+import SotoCore
+
 import struct Foundation.Date
 import typealias Foundation.TimeInterval
-import NIO
-import SotoCore
 
 extension CognitoIdentity {
     struct IdentityCredentialProvider: CredentialProvider {
@@ -28,56 +29,39 @@ extension CognitoIdentity {
             identityPoolId: String,
             identityProvider: IdentityProviderFactory,
             region: Region,
-            httpClient: AWSHTTPClient,
-            logger: Logger = AWSClient.loggingDisabled,
-            eventLoop: EventLoop
+            httpClient: any AWSHTTPClient,
+            logger: Logger = AWSClient.loggingDisabled
         ) {
-            self.client = AWSClient(credentialProvider: .empty, httpClientProvider: .shared(httpClient), logger: logger)
+            self.client = AWSClient(credentialProvider: .empty, httpClient: httpClient, logger: logger)
             self.cognitoIdentity = CognitoIdentity(client: self.client, region: region)
             self.identityPoolId = identityPoolId
-            let context = IdentityProviderFactory.Context(cognitoIdentity: cognitoIdentity, identityPoolId: identityPoolId, logger: logger)
+            let context = IdentityProviderFactory.Context(cognitoIdentity: self.cognitoIdentity, identityPoolId: identityPoolId, logger: logger)
             self.identityProvider = identityProvider.createProvider(context: context)
         }
 
-        func getCredential(on eventLoop: EventLoop, logger: Logger) -> EventLoopFuture<Credential> {
-            return self.identityProvider.getIdentity(on: eventLoop, logger: logger).flatMap { identity -> EventLoopFuture<GetCredentialsForIdentityResponse> in
-                let credentialsRequest = CognitoIdentity.GetCredentialsForIdentityInput(identityId: identity.id, logins: identity.logins)
-                return self.cognitoIdentity.getCredentialsForIdentity(credentialsRequest, logger: logger, on: eventLoop)
+        func getCredential(logger: Logger) async throws -> Credential {
+            let identity = try await self.identityProvider.getIdentity(logger: logger)
+            let credentialsRequest = CognitoIdentity.GetCredentialsForIdentityInput(identityId: identity.id, logins: identity.logins)
+            let response = try await self.cognitoIdentity.getCredentialsForIdentity(credentialsRequest, logger: logger)
+            guard let credentials = response.credentials,
+                let accessKeyId = credentials.accessKeyId,
+                let secretAccessKey = credentials.secretKey,
+                let sessionToken = credentials.sessionToken,
+                let expiration = credentials.expiration
+            else {
+                throw CredentialProviderError.noProvider
             }
-            .flatMapThrowing { response in
-                guard let credentials = response.credentials,
-                      let accessKeyId = credentials.accessKeyId,
-                      let secretAccessKey = credentials.secretKey,
-                      let sessionToken = credentials.sessionToken,
-                      let expiration = credentials.expiration
-                else {
-                    throw CredentialProviderError.noProvider
-                }
-                return RotatingCredential(
-                    accessKeyId: accessKeyId,
-                    secretAccessKey: secretAccessKey,
-                    sessionToken: sessionToken,
-                    expiration: expiration
-                )
-            }
+            return RotatingCredential(
+                accessKeyId: accessKeyId,
+                secretAccessKey: secretAccessKey,
+                sessionToken: sessionToken,
+                expiration: expiration
+            )
         }
 
-        func shutdown(on eventLoop: EventLoop) -> EventLoopFuture<Void> {
-            identityProvider.shutdown(on: eventLoop)
-                .flatMapError { _ in eventLoop.makeSucceededFuture(()) }
-                .flatMap { _ in self.shutdownAWSClient(on: eventLoop) }
-        }
-
-        func shutdownAWSClient(on eventLoop: EventLoop) -> EventLoopFuture<Void> {
-            let promise = eventLoop.makePromise(of: Void.self)
-            client.shutdown { error in
-                if let error = error {
-                    promise.completeWith(.failure(error))
-                } else {
-                    promise.completeWith(.success(()))
-                }
-            }
-            return promise.futureResult
+        func shutdown() async throws {
+            try await self.identityProvider.shutdown()
+            try await self.client.shutdown()
         }
     }
 }
@@ -101,8 +85,7 @@ extension CredentialProviderFactory {
                 identityProvider: .static(logins: logins),
                 region: region,
                 httpClient: context.httpClient,
-                logger: logger,
-                eventLoop: context.eventLoop
+                logger: logger
             )
             return RotatingCredentialProvider(context: context, provider: provider)
         }
@@ -114,7 +97,7 @@ extension CredentialProviderFactory {
     /// For the `identityProvider` parameter construct a struct conforming to `IdentityProvider` as follows
     /// ```
     /// struct MyIdentityProvider: IdentityProvider {
-    ///     func getIdentity(on eventLoop: EventLoop, logger: Logger) -> EventLoopFuture<CognitoIdentity.IdentityParams> {
+    ///     func getIdentity(logger: Logger) async throws -> CognitoIdentity.IdentityParams {
     ///         // code to call backend to return the identity id and token. When backend call completes fill out a
     ///         // `CognitoIdentity.IdentityParams` struct with the details.
     ///     }
@@ -145,8 +128,7 @@ extension CredentialProviderFactory {
                 identityProvider: identityProvider,
                 region: region,
                 httpClient: context.httpClient,
-                logger: logger,
-                eventLoop: context.eventLoop
+                logger: logger
             )
             return RotatingCredentialProvider(context: context, provider: provider)
         }

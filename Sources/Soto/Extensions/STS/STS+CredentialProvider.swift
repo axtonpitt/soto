@@ -12,11 +12,14 @@
 //
 //===----------------------------------------------------------------------===//
 
+import AsyncHTTPClient
+import NIOCore
+import NIOPosix
+import SotoCore
+
 import struct Foundation.Date
 import typealias Foundation.TimeInterval
 import struct Foundation.UUID
-import NIO
-import SotoCore
 
 /// Credential Provider that holds an AWSClient
 protocol CredentialProviderWithClient: CredentialProvider {
@@ -25,32 +28,23 @@ protocol CredentialProviderWithClient: CredentialProvider {
 
 extension CredentialProviderWithClient {
     /// shutdown credential provider and client
-    func shutdown(on eventLoop: EventLoop) -> EventLoopFuture<Void> {
-        // shutdown AWSClient
-        let promise = eventLoop.makePromise(of: Void.self)
-        client.shutdown { error in
-            if let error = error {
-                promise.completeWith(.failure(error))
-            } else {
-                promise.completeWith(.success(()))
-            }
-        }
-        return promise.futureResult
+    func shutdown() async throws {
+        try await client.shutdown()
     }
 }
 
 extension STS {
     /// Enumeration for provided a Request structure to a credential provider
-    enum RequestProvider<Request> {
+    enum RequestProvider<Request: Sendable>: Sendable {
         case `static`(Request)
-        case dynamic((EventLoop) -> EventLoopFuture<Request>)
+        case dynamic(@Sendable () async throws -> Request)
 
-        func request(on eventLoop: EventLoop) -> EventLoopFuture<Request> {
+        func request() async throws -> Request {
             switch self {
             case .static(let request):
-                return eventLoop.makeSucceededFuture(request)
+                return request
             case .dynamic(let requestFunction):
-                return requestFunction(eventLoop)
+                return try await requestFunction()
             }
         }
     }
@@ -65,25 +59,23 @@ extension STS {
             requestProvider: RequestProvider<STS.AssumeRoleRequest>,
             credentialProvider: CredentialProviderFactory,
             region: Region,
-            httpClient: AWSHTTPClient
+            httpClient: any AWSHTTPClient
         ) {
-            self.client = AWSClient(credentialProvider: credentialProvider, httpClientProvider: .shared(httpClient))
+            self.client = AWSClient(credentialProvider: credentialProvider, httpClient: httpClient)
             self.sts = STS(client: self.client, region: region)
             self.requestProvider = requestProvider
         }
 
-        func getCredential(on eventLoop: EventLoop, logger: Logger) -> EventLoopFuture<Credential> {
-            return requestProvider.request(on: eventLoop).flatMap { request in
-                self.sts.assumeRole(request, logger: logger, on: eventLoop)
-            }.flatMapThrowing { response in
-                guard let credentials = response.credentials else { throw CredentialProviderError.noProvider }
-                return RotatingCredential(
-                    accessKeyId: credentials.accessKeyId,
-                    secretAccessKey: credentials.secretAccessKey,
-                    sessionToken: credentials.sessionToken,
-                    expiration: credentials.expiration
-                )
-            }
+        func getCredential(logger: Logger) async throws -> Credential {
+            let request = try await requestProvider.request()
+            let response = try await self.sts.assumeRole(request, logger: logger)
+            guard let credentials = response.credentials else { throw CredentialProviderError.noProvider }
+            return RotatingCredential(
+                accessKeyId: credentials.accessKeyId,
+                secretAccessKey: credentials.secretAccessKey,
+                sessionToken: credentials.sessionToken,
+                expiration: credentials.expiration
+            )
         }
     }
 
@@ -93,24 +85,22 @@ extension STS {
         let client: AWSClient
         let sts: STS
 
-        init(requestProvider: RequestProvider<STS.AssumeRoleWithSAMLRequest>, region: Region, httpClient: AWSHTTPClient) {
-            self.client = AWSClient(credentialProvider: .empty, httpClientProvider: .shared(httpClient))
+        init(requestProvider: RequestProvider<STS.AssumeRoleWithSAMLRequest>, region: Region, httpClient: any AWSHTTPClient) {
+            self.client = AWSClient(credentialProvider: .empty, httpClient: httpClient)
             self.sts = STS(client: self.client, region: region)
             self.requestProvider = requestProvider
         }
 
-        func getCredential(on eventLoop: EventLoop, logger: Logger) -> EventLoopFuture<Credential> {
-            return requestProvider.request(on: eventLoop).flatMap { request in
-                self.sts.assumeRoleWithSAML(request, logger: logger, on: eventLoop)
-            }.flatMapThrowing { response in
-                guard let credentials = response.credentials else { throw CredentialProviderError.noProvider }
-                return RotatingCredential(
-                    accessKeyId: credentials.accessKeyId,
-                    secretAccessKey: credentials.secretAccessKey,
-                    sessionToken: credentials.sessionToken,
-                    expiration: credentials.expiration
-                )
-            }
+        func getCredential(logger: Logger) async throws -> Credential {
+            let request = try await requestProvider.request()
+            let response = try await self.sts.assumeRoleWithSAML(request, logger: logger)
+            guard let credentials = response.credentials else { throw CredentialProviderError.noProvider }
+            return RotatingCredential(
+                accessKeyId: credentials.accessKeyId,
+                secretAccessKey: credentials.secretAccessKey,
+                sessionToken: credentials.sessionToken,
+                expiration: credentials.expiration
+            )
         }
     }
 
@@ -120,24 +110,22 @@ extension STS {
         let client: AWSClient
         let sts: STS
 
-        init(requestProvider: RequestProvider<STS.AssumeRoleWithWebIdentityRequest>, region: Region, httpClient: AWSHTTPClient) {
-            self.client = AWSClient(credentialProvider: .empty, httpClientProvider: .shared(httpClient))
+        init(requestProvider: RequestProvider<STS.AssumeRoleWithWebIdentityRequest>, region: Region, httpClient: any AWSHTTPClient) {
+            self.client = AWSClient(credentialProvider: .empty, httpClient: httpClient)
             self.sts = STS(client: self.client, region: region)
             self.requestProvider = requestProvider
         }
 
-        func getCredential(on eventLoop: EventLoop, logger: Logger) -> EventLoopFuture<Credential> {
-            return requestProvider.request(on: eventLoop).flatMap { request in
-                self.sts.assumeRoleWithWebIdentity(request, logger: logger, on: eventLoop)
-            }.flatMapThrowing { response in
-                guard let credentials = response.credentials else { throw CredentialProviderError.noProvider }
-                return RotatingCredential(
-                    accessKeyId: credentials.accessKeyId,
-                    secretAccessKey: credentials.secretAccessKey,
-                    sessionToken: credentials.sessionToken,
-                    expiration: credentials.expiration
-                )
-            }
+        func getCredential(logger: Logger) async throws -> Credential {
+            let request = try await requestProvider.request()
+            let response = try await self.sts.assumeRoleWithWebIdentity(request, logger: logger)
+            guard let credentials = response.credentials else { throw CredentialProviderError.noProvider }
+            return RotatingCredential(
+                accessKeyId: credentials.accessKeyId,
+                secretAccessKey: credentials.secretAccessKey,
+                sessionToken: credentials.sessionToken,
+                expiration: credentials.expiration
+            )
         }
     }
 
@@ -152,60 +140,46 @@ extension STS {
             let sessionName = Environment["AWS_ROLE_SESSION_NAME"]
 
             self.webIdentityProvider = AssumeRoleWithWebIdentityCredentialProvider(
-                requestProvider: .dynamic { _ in
-                    return Self.loadTokenFile(tokenFile, on: context.eventLoop).map { token in
-                        STS.AssumeRoleWithWebIdentityRequest(
-                            roleArn: roleArn,
-                            roleSessionName: sessionName ?? UUID().uuidString,
-                            webIdentityToken: token
-                        )
-                    }
+                requestProvider: .dynamic {
+                    let token = try await Self.loadTokenFile(tokenFile)
+                    return STS.AssumeRoleWithWebIdentityRequest(
+                        roleArn: roleArn,
+                        roleSessionName: sessionName ?? UUID().uuidString,
+                        webIdentityToken: token
+                    )
                 },
                 region: region,
                 httpClient: context.httpClient
             )
         }
 
-        func shutdown(on eventLoop: EventLoop) -> EventLoopFuture<Void> {
-            return webIdentityProvider.shutdown(on: eventLoop)
+        func shutdown() async throws {
+            try await self.webIdentityProvider.shutdown()
         }
 
         /// get credentials
-        func getCredential(on eventLoop: EventLoop, logger: Logger) -> EventLoopFuture<Credential> {
-            return webIdentityProvider.getCredential(on: eventLoop, logger: logger)
+        func getCredential(logger: Logger) async throws -> Credential {
+            try await self.webIdentityProvider.getCredential(logger: logger)
         }
 
         /// Load web identity token file
-        static func loadTokenFile(_ tokenFile: String, on eventLoop: EventLoop) -> EventLoopFuture<String> {
+        static func loadTokenFile(_ tokenFile: String) async throws -> String {
             let threadPool = NIOThreadPool(numberOfThreads: 1)
             threadPool.start()
+            defer { threadPool.shutdownGracefully { _ in } }
             let fileIO = NonBlockingFileIO(threadPool: threadPool)
 
-            return loadFile(path: tokenFile, on: eventLoop, using: fileIO).map { byteBuffer in
-                var byteBuffer = byteBuffer
-                return byteBuffer.readString(length: byteBuffer.readableBytes) ?? ""
-            }
-            .always { _ in
-                // shutdown the threadpool async
-                threadPool.shutdownGracefully { _ in }
-            }
+            let fileBuffer = try await loadFile(path: tokenFile, using: fileIO)
+            let token = String(buffer: fileBuffer)
+            return token
         }
 
         /// Load a file from disk without blocking the current thread
-        /// - Returns: Event loop future with file contents in a byte-buffer
-        static func loadFile(path: String, on eventLoop: EventLoop, using fileIO: NonBlockingFileIO) -> EventLoopFuture<ByteBuffer> {
-            return fileIO.openFile(path: path, eventLoop: eventLoop)
-                .flatMap { handle, region in
-                    fileIO.read(fileRegion: region, allocator: ByteBufferAllocator(), eventLoop: eventLoop)
-                        .flatMapErrorThrowing { error in
-                            try? handle.close()
-                            throw error
-                        }
-                        .flatMapThrowing { byteBuffer in
-                            try handle.close()
-                            return byteBuffer
-                        }
-                }
+        /// - Returns: file contents in a byte-buffer
+        static func loadFile(path: String, using fileIO: NonBlockingFileIO) async throws -> ByteBuffer {
+            try await fileIO.withFileRegion(path: path) { region in
+                try await fileIO.read(fileRegion: region, allocator: ByteBufferAllocator())
+            }
         }
     }
 
@@ -215,24 +189,27 @@ extension STS {
         let client: AWSClient
         let sts: STS
 
-        init(requestProvider: RequestProvider<STS.GetFederationTokenRequest>, credentialProvider: CredentialProviderFactory, region: Region, httpClient: AWSHTTPClient) {
-            self.client = AWSClient(credentialProvider: credentialProvider, httpClientProvider: .shared(httpClient))
+        init(
+            requestProvider: RequestProvider<STS.GetFederationTokenRequest>,
+            credentialProvider: CredentialProviderFactory,
+            region: Region,
+            httpClient: any AWSHTTPClient
+        ) {
+            self.client = AWSClient(credentialProvider: credentialProvider, httpClient: httpClient)
             self.sts = STS(client: self.client, region: region)
             self.requestProvider = requestProvider
         }
 
-        func getCredential(on eventLoop: EventLoop, logger: Logger) -> EventLoopFuture<Credential> {
-            return requestProvider.request(on: eventLoop).flatMap { request in
-                self.sts.getFederationToken(request, logger: logger, on: eventLoop)
-            }.flatMapThrowing { response in
-                guard let credentials = response.credentials else { throw CredentialProviderError.noProvider }
-                return RotatingCredential(
-                    accessKeyId: credentials.accessKeyId,
-                    secretAccessKey: credentials.secretAccessKey,
-                    sessionToken: credentials.sessionToken,
-                    expiration: credentials.expiration
-                )
-            }
+        func getCredential(logger: Logger) async throws -> Credential {
+            let request = try await requestProvider.request()
+            let response = try await self.sts.getFederationToken(request, logger: logger)
+            guard let credentials = response.credentials else { throw CredentialProviderError.noProvider }
+            return RotatingCredential(
+                accessKeyId: credentials.accessKeyId,
+                secretAccessKey: credentials.secretAccessKey,
+                sessionToken: credentials.sessionToken,
+                expiration: credentials.expiration
+            )
         }
     }
 
@@ -242,24 +219,27 @@ extension STS {
         let client: AWSClient
         let sts: STS
 
-        init(requestProvider: RequestProvider<STS.GetSessionTokenRequest>, credentialProvider: CredentialProviderFactory, region: Region, httpClient: AWSHTTPClient) {
-            self.client = AWSClient(credentialProvider: credentialProvider, httpClientProvider: .shared(httpClient))
+        init(
+            requestProvider: RequestProvider<STS.GetSessionTokenRequest>,
+            credentialProvider: CredentialProviderFactory,
+            region: Region,
+            httpClient: any AWSHTTPClient
+        ) {
+            self.client = AWSClient(credentialProvider: credentialProvider, httpClient: httpClient)
             self.sts = STS(client: self.client, region: region)
             self.requestProvider = requestProvider
         }
 
-        func getCredential(on eventLoop: EventLoop, logger: Logger) -> EventLoopFuture<Credential> {
-            return requestProvider.request(on: eventLoop).flatMap { request in
-                self.sts.getSessionToken(request, logger: logger, on: eventLoop)
-            }.flatMapThrowing { response in
-                guard let credentials = response.credentials else { throw CredentialProviderError.noProvider }
-                return RotatingCredential(
-                    accessKeyId: credentials.accessKeyId,
-                    secretAccessKey: credentials.secretAccessKey,
-                    sessionToken: credentials.sessionToken,
-                    expiration: credentials.expiration
-                )
-            }
+        func getCredential(logger: Logger) async throws -> Credential {
+            let request = try await requestProvider.request()
+            let response = try await self.sts.getSessionToken(request, logger: logger)
+            guard let credentials = response.credentials else { throw CredentialProviderError.noProvider }
+            return RotatingCredential(
+                accessKeyId: credentials.accessKeyId,
+                secretAccessKey: credentials.secretAccessKey,
+                sessionToken: credentials.sessionToken,
+                expiration: credentials.expiration
+            )
         }
     }
 }
@@ -296,11 +276,11 @@ extension CredentialProviderFactory {
     /// - Parameters:
     ///   - credentialProvider: Credential provider used in client that runs the AssumeRole operation
     ///   - region: Region to run request in
-    ///   - requestProvider: Function that returns a EventLoopFuture to be fulfillled with an AssumeRole request struct
+    ///   - requestProvider: Function that returns an AssumeRole request struct
     public static func stsAssumeRole(
         credentialProvider: CredentialProviderFactory = .default,
         region: Region,
-        requestProvider: @escaping (EventLoop) -> EventLoopFuture<STS.AssumeRoleRequest>
+        requestProvider: @escaping @Sendable () async throws -> STS.AssumeRoleRequest
     ) -> CredentialProviderFactory {
         .custom { context in
             let provider = STS.AssumeRoleCredentialProvider(
@@ -333,13 +313,17 @@ extension CredentialProviderFactory {
     ///
     /// - Parameters:
     ///   - region: Region to run request in
-    ///   - requestProvider: Function that returns a EventLoopFuture to be fulfillled with an AssumeRoleWithSAML request struct
+    ///   - requestProvider: Function that returns an AssumeRoleWithSAML request struct
     public static func stsSAML(
         region: Region,
-        requestProvider: @escaping (EventLoop) -> EventLoopFuture<STS.AssumeRoleWithSAMLRequest>
+        requestProvider: @escaping @Sendable () async throws -> STS.AssumeRoleWithSAMLRequest
     ) -> CredentialProviderFactory {
         .custom { context in
-            let provider = STS.AssumeRoleWithSAMLCredentialProvider(requestProvider: .dynamic(requestProvider), region: region, httpClient: context.httpClient)
+            let provider = STS.AssumeRoleWithSAMLCredentialProvider(
+                requestProvider: .dynamic(requestProvider),
+                region: region,
+                httpClient: context.httpClient
+            )
             return RotatingCredentialProvider(context: context, provider: provider)
         }
     }
@@ -353,7 +337,11 @@ extension CredentialProviderFactory {
     ///   - region: Region to run request in
     public static func stsWebIdentity(request: STS.AssumeRoleWithWebIdentityRequest, region: Region) -> CredentialProviderFactory {
         .custom { context in
-            let provider = STS.AssumeRoleWithWebIdentityCredentialProvider(requestProvider: .static(request), region: region, httpClient: context.httpClient)
+            let provider = STS.AssumeRoleWithWebIdentityCredentialProvider(
+                requestProvider: .static(request),
+                region: region,
+                httpClient: context.httpClient
+            )
             return RotatingCredentialProvider(context: context, provider: provider)
         }
     }
@@ -364,13 +352,17 @@ extension CredentialProviderFactory {
     ///
     /// - Parameters:
     ///   - region: Region to run request in
-    ///   - requestProvider: Function that returns a EventLoopFuture to be fulfillled with an AssumeRoleWithWebIdentity request struct
+    ///   - requestProvider: Function that returns an AssumeRoleWithWebIdentity request struct
     public static func stsWebIdentity(
         region: Region,
-        requestProvider: @escaping (EventLoop) -> EventLoopFuture<STS.AssumeRoleWithWebIdentityRequest>
+        requestProvider: @escaping @Sendable () async throws -> STS.AssumeRoleWithWebIdentityRequest
     ) -> CredentialProviderFactory {
         .custom { context in
-            let provider = STS.AssumeRoleWithWebIdentityCredentialProvider(requestProvider: .dynamic(requestProvider), region: region, httpClient: context.httpClient)
+            let provider = STS.AssumeRoleWithWebIdentityCredentialProvider(
+                requestProvider: .dynamic(requestProvider),
+                region: region,
+                httpClient: context.httpClient
+            )
             return RotatingCredentialProvider(context: context, provider: provider)
         }
     }
@@ -448,11 +440,11 @@ extension CredentialProviderFactory {
     /// - Parameters:
     ///   - credentialProvider: Credential provider used in client that runs the GetSessionToken operation
     ///   - region: Region to run request in
-    ///   - requestProvider: Function that returns a EventLoopFuture to be fulfillled with a SessionToken request structure
+    ///   - requestProvider: Function that returns a SessionToken request structure
     public static func stsSessionToken(
         credentialProvider: CredentialProviderFactory = .default,
         region: Region,
-        requestProvider: @escaping (EventLoop) -> EventLoopFuture<STS.GetSessionTokenRequest>
+        requestProvider: @escaping @Sendable () async throws -> STS.GetSessionTokenRequest
     ) -> CredentialProviderFactory {
         .custom { context in
             let provider = STS.SessionTokenCredentialProvider(

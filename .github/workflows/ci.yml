@@ -4,30 +4,29 @@ on:
   push:
     branches:
     - main
+    - 7.x.x
     paths:
     - '**.swift'
   pull_request:
-    branches:
-    - main
     paths:
-    - '**.swift'
+      - '**.swift'
+      - '**.yml'
   workflow_dispatch:
-  
+
 env:
   AWS_ACCESS_KEY_ID : ${{ secrets.AWS_ACCESS_KEY_ID }}
   AWS_SECRET_ACCESS_KEY : ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-  AWS_DISABLE_LOCALSTACK : "true"
+  AWS_DISABLE_LOCALSTACK : "false"
   AWS_ENABLE_LOGGING : "true"
-  AWS_LOG_LEVEL: "trace"
+  AWS_LOG_LEVEL: "debug"
+  STRICT_CONCURRENCY: "true"
 
 jobs:
   macos:
-    runs-on: macOS-latest
+    runs-on: macOS-14
     steps:
     - name: Checkout
-      uses: actions/checkout@v1
-      with:
-        fetch-depth: 1
+      uses: actions/checkout@v4
     - name: SPM build
       run: swift build
 
@@ -35,7 +34,10 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        image: ['swift:5.2', 'swift:5.3', 'swift:5.4']
+        image:
+          - swift:5.10
+          - swift:6.0
+          - swift:6.1
     services:
       localstack:
         image: localstack/localstack
@@ -45,17 +47,12 @@ jobs:
         LOCALSTACK_ENDPOINT : "http://localstack:4566"
     steps:
     - name: Checkout
-      uses: actions/checkout@v1
-      with:
-        fetch-depth: 1
-    - name: Install dependencies
-      run: |
-        apt-get update -qq
-        apt-get install -q -y tzdata zlib1g-dev
+      uses: actions/checkout@v4
     - name: Test Resource Prefix
       # set AWS_TEST_RESOURCE_PREFIX environment variable to a random series of 8 letters
       run: |
         echo AWS_TEST_RESOURCE_PREFIX=$(cat /dev/urandom | tr -dc 'a-z' | head -c 8) >> $GITHUB_ENV
     - name: Test
+      # Cannot run in parallel as APIGateway tests fail occasionally
       run: |
-        swift test --enable-test-discovery --sanitize=thread
+        swift test --enable-test-discovery

@@ -20,8 +20,8 @@ class CloudTrailTests: XCTestCase {
     static var cloudTrail: CloudTrail!
 
     override class func setUp() {
-        Self.client = AWSClient(credentialProvider: TestEnvironment.credentialProvider, middlewares: TestEnvironment.middlewares, httpClientProvider: .createNew)
-        Self.cloudTrail = CloudTrail(
+        self.client = AWSClient(credentialProvider: TestEnvironment.credentialProvider, middleware: TestEnvironment.middlewares)
+        self.cloudTrail = CloudTrail(
             client: CloudTrailTests.client,
             region: .euwest1,
             endpoint: TestEnvironment.getEndPoint(environment: "LOCALSTACK_ENDPOINT")
@@ -38,32 +38,27 @@ class CloudTrailTests: XCTestCase {
         XCTAssertNoThrow(try self.client.syncShutdown())
     }
 
-    func testLookupEvents() {
-        // This doesnt work with LocalStack
-        guard !TestEnvironment.isUsingLocalstack else { return }
+    func testLookupEvents() async throws {
+        // doesnt work with LocalStack
+        try XCTSkipIf(TestEnvironment.isUsingLocalstack)
+
         let from = Date(timeIntervalSinceNow: -1 * 24 * 60 * 60)
         let to = Date()
         let request = CloudTrail.LookupEventsRequest(endTime: to, lookupAttributes: nil, startTime: from)
-        let response = Self.cloudTrail.lookupEvents(request)
-            .flatMapThrowing { response in
-                if let event = response.events?.first {
-                    XCTAssertNotNil(event.eventTime)
-                }
-            }
-        XCTAssertNoThrow(try response.wait())
+        let response = try await Self.cloudTrail.lookupEvents(request)
+        let event = try XCTUnwrap(response.events?.first)
+        XCTAssertNotNil(event.eventTime)
     }
 
-    func testError() {
+    func testError() async throws {
         // This doesnt work with LocalStack
         guard !TestEnvironment.isUsingLocalstack else { return }
-        let response = Self.cloudTrail.getTrail(.init(name: "nonexistent-trail"))
-        XCTAssertThrowsError(try response.wait()) { error in
-            switch error {
-            case let error as CloudTrailErrorType where error == .trailNotFoundException:
-                XCTAssertNotNil(error.message)
-            default:
-                XCTFail("Wrong error: \(error)")
-            }
+        do {
+            _ = try await Self.cloudTrail.getTrail(.init(name: "nonexistent-trail"))
+        } catch let error as CloudTrailErrorType where error == .trailNotFoundException {
+            XCTAssertNotNil(error.message)
+        } catch {
+            XCTFail("Wrong error: \(error)")
         }
     }
 }

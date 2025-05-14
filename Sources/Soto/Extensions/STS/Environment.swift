@@ -12,14 +12,18 @@
 //
 //===----------------------------------------------------------------------===//
 
-#if os(Linux)
+#if canImport(Glibc)
 import Glibc
-#else
+#elseif canImport(Musl)
+import Musl
+#elseif canImport(Darwin)
 import Darwin.C
+#else
+#error("The Soto module was unable to identify your C library.")
 #endif
 
-internal enum Environment {
-    internal static subscript(_ name: String) -> String? {
+enum Environment {
+    static subscript(_ name: String) -> String? {
         guard let value = getenv(name) else {
             return nil
         }

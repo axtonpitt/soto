@@ -2,7 +2,7 @@
 //
 // This source file is part of the Soto for AWS open source project
 //
-// Copyright (c) 2017-2020 the Soto project authors
+// Copyright (c) 2017-2025 the Soto project authors
 // Licensed under Apache License v2.0
 //
 // See LICENSE.txt for license information
@@ -15,12 +15,53 @@
 import Foundation
 
 public class DynamoDBEncoder {
-    public var userInfo: [CodingUserInfoKey: Any] = [:]
+    /// The strategy to use for encoding `Date` values.
+    public enum DateEncodingStrategy: Sendable {
+        /// Defer to `Date` for encoding. This is the default strategy.
+        case deferredToDate
+
+        /// Decode the `Date` as a UNIX timestamp from a JSON number.
+        case secondsSince1970
+
+        /// Decode the `Date` as UNIX millisecond timestamp from a JSON number.
+        case millisecondsSince1970
+
+        /// Decode the `Date` as an ISO-8601-formatted string (in RFC 3339 format).
+        @available(macOS 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *)
+        case iso8601
+
+        /// Decode the `Date` as a custom value decoded by the given closure.
+        @preconcurrency
+        case custom(@Sendable (Date, Encoder) -> DynamoDB.AttributeValue)
+    }
+
+    /// Options set on the top-level encoder to pass down the encoding hierarchy.
+    fileprivate struct Options {
+        var dateEncodingStrategy: DateEncodingStrategy = .deferredToDate
+        var userInfo: [CodingUserInfoKey: any Sendable] = [:]
+    }
+    fileprivate var options: Options = .init()
+
+    public var dateEncodingStrategy: DateEncodingStrategy {
+        get { self.options.dateEncodingStrategy }
+        set { self.options.dateEncodingStrategy = newValue }
+    }
+    public var userInfo: [CodingUserInfoKey: any Sendable] {
+        get { self.options.userInfo }
+        _modify {
+            var value = self.options.userInfo
+            defer {
+                options.userInfo = value
+            }
+            yield &value
+        }
+        set { self.options.userInfo = newValue }
+    }
 
     public init() {}
 
-    public func encode<T: Encodable>(_ value: T) throws -> [String: DynamoDB.AttributeValue] {
-        let encoder = _DynamoDBEncoder(userInfo: userInfo)
+    public func encode(_ value: some Encodable) throws -> [String: DynamoDB.AttributeValue] {
+        let encoder = _DynamoDBEncoder(options: options)
         try value.encode(to: encoder)
         return try encoder.storage.collapse()
     }
@@ -72,7 +113,7 @@ private class _EncoderUnkeyedContainer: _EncoderContainer {
 
     var attribute: DynamoDB.AttributeValue {
         // merge child values, plus nested containers
-        let values = self.values + self.nestedContainers.map { $0.attribute }
+        let values = self.values + self.nestedContainers.map(\.attribute)
         return .l(values)
     }
 }
@@ -93,25 +134,25 @@ private struct _EncoderStorage {
     /// push a new container onto the storage
     mutating func pushKeyedContainer() -> _EncoderKeyedContainer {
         let container = _EncoderKeyedContainer()
-        containers.append(container)
+        self.containers.append(container)
         return container
     }
 
     /// push a new container onto the storage
     mutating func pushUnkeyedContainer() -> _EncoderUnkeyedContainer {
         let container = _EncoderUnkeyedContainer()
-        containers.append(container)
+        self.containers.append(container)
         return container
     }
 
     mutating func pushSingleValueContainer(_ attribute: DynamoDB.AttributeValue) {
         let container = _EncoderSingleValueContainer(attribute: attribute)
-        containers.append(container)
+        self.containers.append(container)
     }
 
     /// pop a container from the storage
     @discardableResult mutating func popContainer() -> _EncoderContainer {
-        return self.containers.removeLast()
+        self.containers.removeLast()
     }
 
     func collapse() throws -> [String: DynamoDB.AttributeValue] {
@@ -121,14 +162,17 @@ private struct _EncoderStorage {
     }
 }
 
-class _DynamoDBEncoder: Encoder {
+private class _DynamoDBEncoder: Encoder {
     var codingPath: [CodingKey]
-    var userInfo: [CodingUserInfoKey: Any]
     fileprivate var storage: _EncoderStorage
+    fileprivate let options: DynamoDBEncoder.Options
+    var userInfo: [CodingUserInfoKey: Any] {
+        self.options.userInfo
+    }
 
-    init(userInfo: [CodingUserInfoKey: Any], codingPath: [CodingKey] = []) {
+    fileprivate init(options: DynamoDBEncoder.Options, codingPath: [CodingKey] = []) {
         self.codingPath = codingPath
-        self.userInfo = userInfo
+        self.options = options
         self.storage = _EncoderStorage()
     }
 
@@ -143,7 +187,7 @@ class _DynamoDBEncoder: Encoder {
     }
 
     func singleValueContainer() -> SingleValueEncodingContainer {
-        return self
+        self
     }
 
     fileprivate struct KEC<Key: CodingKey>: KeyedEncodingContainerProtocol {
@@ -151,7 +195,7 @@ class _DynamoDBEncoder: Encoder {
         let container: _EncoderKeyedContainer
         let encoder: _DynamoDBEncoder
 
-        internal init(container: _EncoderKeyedContainer, encoder: _DynamoDBEncoder) {
+        init(container: _EncoderKeyedContainer, encoder: _DynamoDBEncoder) {
             self.container = container
             self.encoder = encoder
             self.codingPath = encoder.codingPath
@@ -221,7 +265,7 @@ class _DynamoDBEncoder: Encoder {
             self.encode(.n(value.description), forKey: key)
         }
 
-        mutating func encode<T>(_ value: T, forKey key: Key) throws where T: Encodable {
+        mutating func encode(_ value: some Encodable, forKey key: Key) throws {
             self.encoder.codingPath.append(key)
             defer { self.encoder.codingPath.removeLast() }
 
@@ -229,12 +273,13 @@ class _DynamoDBEncoder: Encoder {
             self.encode(attribute, forKey: key)
         }
 
-        mutating func nestedContainer<NestedKey>(keyedBy keyType: NestedKey.Type, forKey key: Key) -> KeyedEncodingContainer<NestedKey> where NestedKey: CodingKey {
+        mutating func nestedContainer<NestedKey>(keyedBy keyType: NestedKey.Type, forKey key: Key) -> KeyedEncodingContainer<NestedKey>
+        where NestedKey: CodingKey {
             self.encoder.codingPath.append(key)
             defer { self.encoder.codingPath.removeLast() }
 
             let nestedContainer = _EncoderKeyedContainer()
-            container.addNestedContainer(path: key.stringValue, child: nestedContainer)
+            self.container.addNestedContainer(path: key.stringValue, child: nestedContainer)
 
             return KeyedEncodingContainer(KEC<NestedKey>(container: nestedContainer, encoder: self.encoder))
         }
@@ -244,7 +289,7 @@ class _DynamoDBEncoder: Encoder {
             defer { self.encoder.codingPath.removeLast() }
 
             let nestedContainer = _EncoderUnkeyedContainer()
-            container.addNestedContainer(path: key.stringValue, child: nestedContainer)
+            self.container.addNestedContainer(path: key.stringValue, child: nestedContainer)
 
             return UKEC(container: nestedContainer, encoder: self.encoder)
         }
@@ -254,17 +299,17 @@ class _DynamoDBEncoder: Encoder {
             defer { self.encoder.codingPath.removeLast() }
 
             let nestedContainer = _EncoderKeyedContainer()
-            container.addNestedContainer(path: key.stringValue, child: nestedContainer)
+            self.container.addNestedContainer(path: key.stringValue, child: nestedContainer)
 
             return _DynamoDBReferencingEncoder(encoder: self.encoder, container: nestedContainer)
         }
 
         mutating func superEncoder() -> Encoder {
-            return self._superEncoder(forKey: DynamoDBCodingKey.super)
+            self._superEncoder(forKey: DynamoDBCodingKey.super)
         }
 
         mutating func superEncoder(forKey key: Key) -> Encoder {
-            return self._superEncoder(forKey: key)
+            self._superEncoder(forKey: key)
         }
     }
 
@@ -274,7 +319,7 @@ class _DynamoDBEncoder: Encoder {
         let container: _EncoderUnkeyedContainer
         let encoder: _DynamoDBEncoder
 
-        internal init(container: _EncoderUnkeyedContainer, encoder: _DynamoDBEncoder) {
+        init(container: _EncoderUnkeyedContainer, encoder: _DynamoDBEncoder) {
             self.container = container
             self.encoder = encoder
             self.codingPath = encoder.codingPath
@@ -346,7 +391,7 @@ class _DynamoDBEncoder: Encoder {
             self.encode(.n(value.description))
         }
 
-        mutating func encode<T>(_ value: T) throws where T: Encodable {
+        mutating func encode(_ value: some Encodable) throws {
             let attribute = try encoder.box(value)
             self.encode(attribute)
         }
@@ -358,7 +403,7 @@ class _DynamoDBEncoder: Encoder {
             self.count += 1
 
             let nestedContainer = _EncoderKeyedContainer()
-            container.addNestedContainer(nestedContainer)
+            self.container.addNestedContainer(nestedContainer)
 
             return KeyedEncodingContainer(KEC<NestedKey>(container: nestedContainer, encoder: self.encoder))
         }
@@ -370,7 +415,7 @@ class _DynamoDBEncoder: Encoder {
             self.count += 1
 
             let nestedContainer = _EncoderUnkeyedContainer()
-            container.addNestedContainer(nestedContainer)
+            self.container.addNestedContainer(nestedContainer)
 
             return UKEC(container: nestedContainer, encoder: self.encoder)
         }
@@ -382,85 +427,111 @@ class _DynamoDBEncoder: Encoder {
 }
 
 extension _DynamoDBEncoder: SingleValueEncodingContainer {
-    func encode(_ attribute: DynamoDB.AttributeValue) {
+    func encode(attribute: DynamoDB.AttributeValue) {
         self.storage.pushSingleValueContainer(attribute)
     }
 
     func encodeNil() throws {
-        self.encode(.null(true))
+        self.encode(attribute: .null(true))
     }
 
     func encode(_ value: Bool) throws {
-        self.encode(.bool(value))
+        self.encode(attribute: .bool(value))
     }
 
     func encode(_ value: String) throws {
-        self.encode(.s(value))
+        self.encode(attribute: .s(value))
     }
 
     func encode(_ value: Double) throws {
-        self.encode(.n(value.description))
+        self.encode(attribute: .n(value.description))
     }
 
     func encode(_ value: Float) throws {
-        self.encode(.n(value.description))
+        self.encode(attribute: .n(value.description))
     }
 
     func encode(_ value: Int) throws {
-        self.encode(.n(value.description))
+        self.encode(attribute: .n(value.description))
     }
 
     func encode(_ value: Int8) throws {
-        self.encode(.n(value.description))
+        self.encode(attribute: .n(value.description))
     }
 
     func encode(_ value: Int16) throws {
-        self.encode(.n(value.description))
+        self.encode(attribute: .n(value.description))
     }
 
     func encode(_ value: Int32) throws {
-        self.encode(.n(value.description))
+        self.encode(attribute: .n(value.description))
     }
 
     func encode(_ value: Int64) throws {
-        self.encode(.n(value.description))
+        self.encode(attribute: .n(value.description))
     }
 
     func encode(_ value: UInt) throws {
-        self.encode(.n(value.description))
+        self.encode(attribute: .n(value.description))
     }
 
     func encode(_ value: UInt8) throws {
-        self.encode(.n(value.description))
+        self.encode(attribute: .n(value.description))
     }
 
     func encode(_ value: UInt16) throws {
-        self.encode(.n(value.description))
+        self.encode(attribute: .n(value.description))
     }
 
     func encode(_ value: UInt32) throws {
-        self.encode(.n(value.description))
+        self.encode(attribute: .n(value.description))
     }
 
     func encode(_ value: UInt64) throws {
-        self.encode(.n(value.description))
+        self.encode(attribute: .n(value.description))
     }
 
-    func encode<T>(_ value: T) throws where T: Encodable {
+    func encode(_ value: some Encodable) throws {
         let attribute = try box(value)
-        encode(attribute)
+        self.encode(attribute: attribute)
     }
 }
 
 extension _DynamoDBEncoder {
-    func box(_ data: Data) throws -> DynamoDB.AttributeValue {
-        return .b(data)
+    func box(_ data: AWSBase64Data) throws -> DynamoDB.AttributeValue {
+        .b(data)
+    }
+
+    func box(_ date: Date) throws -> DynamoDB.AttributeValue {
+        switch self.options.dateEncodingStrategy {
+        case .deferredToDate:
+            try date.encode(to: self)
+            return self.storage.popContainer().attribute
+        case .millisecondsSince1970:
+            return .n((date.timeIntervalSince1970 * 1000).description)
+        case .secondsSince1970:
+            return .n(date.timeIntervalSince1970.description)
+        case .iso8601:
+            #if compiler(<6.0)
+            return .s(_iso8601DateFormatter.string(from: date))
+            #else
+            if #available(macOS 12, iOS 15, tvOS 15, watchOS 8, *) {
+                return .s(date.formatted(.iso8601))
+            } else {
+                return .s(_iso8601DateFormatter.string(from: date))
+            }
+            #endif
+        case .custom(let closure):
+            return closure(date, self)
+        }
     }
 
     func box(_ value: Encodable) throws -> DynamoDB.AttributeValue {
         let type = Swift.type(of: value)
-        if type == Data.self || type == NSData.self {
-            return try self.box(value as! Data)
+        if type == AWSBase64Data.self {
+            return try self.box(value as! AWSBase64Data)
+        } else if type == Date.self {
+            return try self.box(value as! Date)
         } else {
             try value.encode(to: self)
             return self.storage.popContainer().attribute
@@ -481,7 +552,7 @@ private class _DynamoDBReferencingEncoder: _DynamoDBEncoder {
 
     init(encoder: _DynamoDBEncoder, container: _EncoderKeyedContainer) {
         self.container = container
-        super.init(userInfo: encoder.userInfo, codingPath: encoder.codingPath)
+        super.init(options: encoder.options, codingPath: encoder.codingPath)
     }
 
     deinit {

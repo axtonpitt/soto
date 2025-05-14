@@ -2,7 +2,7 @@
 //
 // This source file is part of the Soto for AWS open source project
 //
-// Copyright (c) 2017-2020 the Soto project authors
+// Copyright (c) 2017-2025 the Soto project authors
 // Licensed under Apache License v2.0
 //
 // See LICENSE.txt for license information
@@ -15,12 +15,53 @@
 import Foundation
 
 public class DynamoDBDecoder {
-    public var userInfo: [CodingUserInfoKey: Any] = [:]
+    /// The strategy to use for decoding `Date` values.
+    public enum DateDecodingStrategy: Sendable {
+        /// Defer to `Date` for decoding. This is the default strategy.
+        case deferredToDate
+
+        /// Decode the `Date` as a UNIX timestamp from a JSON number.
+        case secondsSince1970
+
+        /// Decode the `Date` as UNIX millisecond timestamp from a JSON number.
+        case millisecondsSince1970
+
+        /// Decode the `Date` as an ISO-8601-formatted string (in RFC 3339 format).
+        @available(macOS 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *)
+        case iso8601
+
+        /// Decode the `Date` as a custom value decoded by the given closure.
+        @preconcurrency
+        case custom(@Sendable (_ decoder: Decoder) throws -> Date)
+    }
+
+    /// Options set on the top-level encoder to pass down the decoding hierarchy.
+    fileprivate struct Options {
+        var dateDecodingStrategy: DateDecodingStrategy = .deferredToDate
+        var userInfo: [CodingUserInfoKey: any Sendable] = [:]
+    }
+    fileprivate var options: Options = .init()
+
+    public var dateDecodingStrategy: DateDecodingStrategy {
+        get { self.options.dateDecodingStrategy }
+        set { self.options.dateDecodingStrategy = newValue }
+    }
+    public var userInfo: [CodingUserInfoKey: any Sendable] {
+        get { self.options.userInfo }
+        _modify {
+            var value = self.options.userInfo
+            defer {
+                options.userInfo = value
+            }
+            yield &value
+        }
+        set { self.options.userInfo = newValue }
+    }
 
     public init() {}
 
     public func decode<T: Decodable>(_ type: T.Type, from attributes: [String: DynamoDB.AttributeValue]) throws -> T {
-        let decoder = _DynamoDBDecoder(referencing: attributes, userInfo: userInfo)
+        let decoder = _DynamoDBDecoder(referencing: attributes, options: options)
         let value = try T(from: decoder)
         return value
     }
@@ -37,7 +78,7 @@ private struct _DecoderStorage {
     }
 
     /// return the attribute at the top of the storage
-    var topAttribute: DynamoDB.AttributeValue { return attributes.last! }
+    var topAttribute: DynamoDB.AttributeValue { self.attributes.last! }
 
     /// push a new attribute onto the storage
     mutating func pushAttribute(_ attribute: DynamoDB.AttributeValue) {
@@ -46,19 +87,21 @@ private struct _DecoderStorage {
 
     /// pop a attribute from the storage
     @discardableResult mutating func popAttribute() -> DynamoDB.AttributeValue {
-        return self.attributes.removeLast()
+        self.attributes.removeLast()
     }
 }
 
 private class _DynamoDBDecoder: Decoder {
     var codingPath: [CodingKey]
-    var userInfo: [CodingUserInfoKey: Any]
+    var options: DynamoDBDecoder.Options
     let attributes: [String: DynamoDB.AttributeValue]
     var storage: _DecoderStorage
-
-    init(referencing: [String: DynamoDB.AttributeValue], userInfo: [CodingUserInfoKey: Any], codingPath: [CodingKey] = []) {
+    var userInfo: [CodingUserInfoKey: Any] {
+        options.userInfo
+    }
+    init(referencing: [String: DynamoDB.AttributeValue], options: DynamoDBDecoder.Options, codingPath: [CodingKey] = []) {
         self.codingPath = codingPath
-        self.userInfo = userInfo
+        self.options = options
         self.attributes = referencing
         self.storage = _DecoderStorage(.m(self.attributes))
     }
@@ -71,11 +114,11 @@ private class _DynamoDBDecoder: Decoder {
     }
 
     func unkeyedContainer() throws -> UnkeyedDecodingContainer {
-        return UKDC(attribute: self.storage.topAttribute, decoder: self)
+        UKDC(attribute: self.storage.topAttribute, decoder: self)
     }
 
     func singleValueContainer() throws -> SingleValueDecodingContainer {
-        return self
+        self
     }
 
     struct KDC<Key: CodingKey>: KeyedDecodingContainerProtocol {
@@ -92,7 +135,7 @@ private class _DynamoDBDecoder: Decoder {
         }
 
         func contains(_ key: Key) -> Bool {
-            return self.allKeys.first { $0.stringValue == key.stringValue } != nil
+            self.allKeys.first { $0.stringValue == key.stringValue } != nil
         }
 
         func getValue(forKey key: Key) throws -> DynamoDB.AttributeValue {
@@ -103,63 +146,63 @@ private class _DynamoDBDecoder: Decoder {
         }
 
         func decodeNil(forKey key: Key) throws -> Bool {
-            return try self.decoder.unboxNil(self.getValue(forKey: key))
+            try self.decoder.unboxNil(self.getValue(forKey: key))
         }
 
         func decode(_ type: Bool.Type, forKey key: Key) throws -> Bool {
-            return try self.decoder.unbox(self.getValue(forKey: key), as: Bool.self)
+            try self.decoder.unbox(self.getValue(forKey: key), as: Bool.self)
         }
 
         func decode(_ type: String.Type, forKey key: Key) throws -> String {
-            return try self.decoder.unbox(self.getValue(forKey: key), as: String.self)
+            try self.decoder.unbox(self.getValue(forKey: key), as: String.self)
         }
 
         func decode(_ type: Double.Type, forKey key: Key) throws -> Double {
-            return try self.decoder.unbox(self.getValue(forKey: key), as: Double.self)
+            try self.decoder.unbox(self.getValue(forKey: key), as: Double.self)
         }
 
         func decode(_ type: Float.Type, forKey key: Key) throws -> Float {
-            return try self.decoder.unbox(self.getValue(forKey: key), as: Float.self)
+            try self.decoder.unbox(self.getValue(forKey: key), as: Float.self)
         }
 
         func decode(_ type: Int.Type, forKey key: Key) throws -> Int {
-            return try self.decoder.unbox(self.getValue(forKey: key), as: Int.self)
+            try self.decoder.unbox(self.getValue(forKey: key), as: Int.self)
         }
 
         func decode(_ type: Int8.Type, forKey key: Key) throws -> Int8 {
-            return try self.decoder.unbox(self.getValue(forKey: key), as: Int8.self)
+            try self.decoder.unbox(self.getValue(forKey: key), as: Int8.self)
         }
 
         func decode(_ type: Int16.Type, forKey key: Key) throws -> Int16 {
-            return try self.decoder.unbox(self.getValue(forKey: key), as: Int16.self)
+            try self.decoder.unbox(self.getValue(forKey: key), as: Int16.self)
         }
 
         func decode(_ type: Int32.Type, forKey key: Key) throws -> Int32 {
-            return try self.decoder.unbox(self.getValue(forKey: key), as: Int32.self)
+            try self.decoder.unbox(self.getValue(forKey: key), as: Int32.self)
         }
 
         func decode(_ type: Int64.Type, forKey key: Key) throws -> Int64 {
-            return try self.decoder.unbox(self.getValue(forKey: key), as: Int64.self)
+            try self.decoder.unbox(self.getValue(forKey: key), as: Int64.self)
         }
 
         func decode(_ type: UInt.Type, forKey key: Key) throws -> UInt {
-            return try self.decoder.unbox(self.getValue(forKey: key), as: UInt.self)
+            try self.decoder.unbox(self.getValue(forKey: key), as: UInt.self)
         }
 
         func decode(_ type: UInt8.Type, forKey key: Key) throws -> UInt8 {
-            return try self.decoder.unbox(self.getValue(forKey: key), as: UInt8.self)
+            try self.decoder.unbox(self.getValue(forKey: key), as: UInt8.self)
         }
 
         func decode(_ type: UInt16.Type, forKey key: Key) throws -> UInt16 {
-            return try self.decoder.unbox(self.getValue(forKey: key), as: UInt16.self)
+            try self.decoder.unbox(self.getValue(forKey: key), as: UInt16.self)
         }
 
         func decode(_ type: UInt32.Type, forKey key: Key) throws -> UInt32 {
-            return try self.decoder.unbox(self.getValue(forKey: key), as: UInt32.self)
+            try self.decoder.unbox(self.getValue(forKey: key), as: UInt32.self)
         }
 
         func decode(_ type: UInt64.Type, forKey key: Key) throws -> UInt64 {
-            return try self.decoder.unbox(self.getValue(forKey: key), as: UInt64.self)
+            try self.decoder.unbox(self.getValue(forKey: key), as: UInt64.self)
         }
 
         func decode<T>(_ type: T.Type, forKey key: Key) throws -> T where T: Decodable {
@@ -169,7 +212,8 @@ private class _DynamoDBDecoder: Decoder {
             return try self.decoder.unbox(self.getValue(forKey: key), as: T.self)
         }
 
-        func nestedContainer<NestedKey>(keyedBy type: NestedKey.Type, forKey key: Key) throws -> KeyedDecodingContainer<NestedKey> where NestedKey: CodingKey {
+        func nestedContainer<NestedKey>(keyedBy type: NestedKey.Type, forKey key: Key) throws -> KeyedDecodingContainer<NestedKey>
+        where NestedKey: CodingKey {
             self.decoder.codingPath.append(key)
             defer { self.decoder.codingPath.removeLast() }
 
@@ -183,7 +227,7 @@ private class _DynamoDBDecoder: Decoder {
             self.decoder.codingPath.append(key)
             defer { self.decoder.codingPath.removeLast() }
 
-            return UKDC(attribute: try self.getValue(forKey: key), decoder: self.decoder)
+            return try UKDC(attribute: self.getValue(forKey: key), decoder: self.decoder)
         }
 
         func _superDecoder(forKey key: CodingKey) throws -> Decoder {
@@ -196,27 +240,27 @@ private class _DynamoDBDecoder: Decoder {
             guard case .m(let attributes) = value else {
                 throw DecodingError.dataCorrupted(.init(codingPath: self.codingPath, debugDescription: "Expected a map attribute"))
             }
-            return _DynamoDBDecoder(referencing: attributes, userInfo: self.decoder.userInfo, codingPath: self.decoder.codingPath)
+            return _DynamoDBDecoder(referencing: attributes, options: self.decoder.options, codingPath: self.decoder.codingPath)
         }
 
         func superDecoder() throws -> Decoder {
-            return try self._superDecoder(forKey: DynamoDBCodingKey.super)
+            try self._superDecoder(forKey: DynamoDBCodingKey.super)
         }
 
         func superDecoder(forKey key: Key) throws -> Decoder {
-            return try self._superDecoder(forKey: key)
+            try self._superDecoder(forKey: key)
         }
     }
 
     struct UKDC: UnkeyedDecodingContainer {
         var codingPath: [CodingKey]
         var count: Int?
-        var isAtEnd: Bool { return self.currentIndex >= self.count! }
+        var isAtEnd: Bool { self.currentIndex >= self.count! }
         var currentIndex: Int
         var attribute: DynamoDB.AttributeValue
         let decoder: _DynamoDBDecoder
 
-        internal init(attribute: DynamoDB.AttributeValue, decoder: _DynamoDBDecoder) {
+        init(attribute: DynamoDB.AttributeValue, decoder: _DynamoDBDecoder) {
             self.attribute = attribute
             self.decoder = decoder
             self.codingPath = decoder.codingPath
@@ -238,10 +282,13 @@ private class _DynamoDBDecoder: Decoder {
 
         mutating func getAttributeValue() throws -> DynamoDB.AttributeValue {
             guard case .l(let values) = self.attribute else {
-                throw DecodingError.typeMismatch(type(of: self.attribute), .init(codingPath: self.codingPath, debugDescription: "Expected DynamoDB.AttributeValue.l"))
+                throw DecodingError.typeMismatch(
+                    type(of: self.attribute),
+                    .init(codingPath: self.codingPath, debugDescription: "Expected DynamoDB.AttributeValue.l")
+                )
             }
             let value = values[currentIndex]
-            currentIndex += 1
+            self.currentIndex += 1
             return value
         }
 
@@ -249,17 +296,23 @@ private class _DynamoDBDecoder: Decoder {
             switch self.attribute {
             case .ns(let values):
                 let value = values[currentIndex]
-                currentIndex += 1
+                self.currentIndex += 1
                 return value
             case .l(let attributes):
                 let attribute = attributes[currentIndex]
                 guard case .n(let value) = attribute else {
-                    throw DecodingError.typeMismatch(type(of: self.attribute), .init(codingPath: self.codingPath, debugDescription: "Expected DynamoDB.AttributeValue.l holding a number attribute"))
+                    throw DecodingError.typeMismatch(
+                        type(of: self.attribute),
+                        .init(codingPath: self.codingPath, debugDescription: "Expected DynamoDB.AttributeValue.l holding a number attribute")
+                    )
                 }
                 self.currentIndex += 1
                 return value
             default:
-                throw DecodingError.typeMismatch(type(of: self.attribute), .init(codingPath: self.codingPath, debugDescription: "Expected DynamoDB.AttributeValue.l"))
+                throw DecodingError.typeMismatch(
+                    type(of: self.attribute),
+                    .init(codingPath: self.codingPath, debugDescription: "Expected DynamoDB.AttributeValue.l")
+                )
             }
         }
 
@@ -267,17 +320,23 @@ private class _DynamoDBDecoder: Decoder {
             switch self.attribute {
             case .ss(let values):
                 let value = values[currentIndex]
-                currentIndex += 1
+                self.currentIndex += 1
                 return value
             case .l(let attributes):
                 let attribute = attributes[currentIndex]
                 guard case .s(let value) = attribute else {
-                    throw DecodingError.typeMismatch(type(of: self.attribute), .init(codingPath: self.codingPath, debugDescription: "Expected DynamoDB.AttributeValue.l holding a string attribute"))
+                    throw DecodingError.typeMismatch(
+                        type(of: self.attribute),
+                        .init(codingPath: self.codingPath, debugDescription: "Expected DynamoDB.AttributeValue.l holding a string attribute")
+                    )
                 }
                 self.currentIndex += 1
                 return value
             default:
-                throw DecodingError.typeMismatch(type(of: self.attribute), .init(codingPath: self.codingPath, debugDescription: "Expected DynamoDB.AttributeValue.l"))
+                throw DecodingError.typeMismatch(
+                    type(of: self.attribute),
+                    .init(codingPath: self.codingPath, debugDescription: "Expected DynamoDB.AttributeValue.l")
+                )
             }
         }
 
@@ -298,7 +357,7 @@ private class _DynamoDBDecoder: Decoder {
         }
 
         mutating func decode(_: String.Type) throws -> String {
-            return try self.getStringValue()
+            try self.getStringValue()
         }
 
         mutating func decode(_: Double.Type) throws -> Double {
@@ -401,22 +460,22 @@ private class _DynamoDBDecoder: Decoder {
             switch self.attribute {
             case .bs(let values):
                 let value = values[currentIndex]
-                currentIndex += 1
+                self.currentIndex += 1
                 return try self.decoder.unbox(.b(value), as: T.self)
 
             case .ss(let values):
                 let value = values[currentIndex]
-                currentIndex += 1
+                self.currentIndex += 1
                 return try self.decoder.unbox(.s(value), as: T.self)
 
             case .ns(let values):
                 let value = values[currentIndex]
-                currentIndex += 1
+                self.currentIndex += 1
                 return try self.decoder.unbox(.n(value), as: T.self)
 
             case .l(let values):
                 let value = values[currentIndex]
-                currentIndex += 1
+                self.currentIndex += 1
                 return try self.decoder.unbox(value, as: T.self)
 
             default:
@@ -424,7 +483,8 @@ private class _DynamoDBDecoder: Decoder {
             }
         }
 
-        mutating func nestedContainer<NestedKey>(keyedBy type: NestedKey.Type) throws -> KeyedDecodingContainer<NestedKey> where NestedKey: CodingKey {
+        mutating func nestedContainer<NestedKey>(keyedBy type: NestedKey.Type) throws -> KeyedDecodingContainer<NestedKey>
+        where NestedKey: CodingKey {
             self.decoder.codingPath.append(DynamoDBCodingKey(index: self.currentIndex))
             defer { self.decoder.codingPath.removeLast() }
 
@@ -438,7 +498,7 @@ private class _DynamoDBDecoder: Decoder {
             self.decoder.codingPath.append(DynamoDBCodingKey(index: self.currentIndex))
             defer { self.decoder.codingPath.removeLast() }
 
-            return UKDC(attribute: try self.getAttributeValue(), decoder: self.decoder)
+            return try UKDC(attribute: self.getAttributeValue(), decoder: self.decoder)
         }
 
         mutating func superDecoder() throws -> Decoder {
@@ -454,63 +514,63 @@ extension _DynamoDBDecoder: SingleValueDecodingContainer {
     }
 
     func decode(_: Bool.Type) throws -> Bool {
-        return try unbox(self.storage.topAttribute, as: Bool.self)
+        try unbox(self.storage.topAttribute, as: Bool.self)
     }
 
     func decode(_: String.Type) throws -> String {
-        return try unbox(self.storage.topAttribute, as: String.self)
+        try unbox(self.storage.topAttribute, as: String.self)
     }
 
     func decode(_: Double.Type) throws -> Double {
-        return try unbox(self.storage.topAttribute, as: Double.self)
+        try unbox(self.storage.topAttribute, as: Double.self)
     }
 
     func decode(_: Float.Type) throws -> Float {
-        return try unbox(self.storage.topAttribute, as: Float.self)
+        try unbox(self.storage.topAttribute, as: Float.self)
     }
 
     func decode(_: Int.Type) throws -> Int {
-        return try unbox(self.storage.topAttribute, as: Int.self)
+        try unbox(self.storage.topAttribute, as: Int.self)
     }
 
     func decode(_: Int8.Type) throws -> Int8 {
-        return try unbox(self.storage.topAttribute, as: Int8.self)
+        try unbox(self.storage.topAttribute, as: Int8.self)
     }
 
     func decode(_: Int16.Type) throws -> Int16 {
-        return try unbox(self.storage.topAttribute, as: Int16.self)
+        try unbox(self.storage.topAttribute, as: Int16.self)
     }
 
     func decode(_: Int32.Type) throws -> Int32 {
-        return try unbox(self.storage.topAttribute, as: Int32.self)
+        try unbox(self.storage.topAttribute, as: Int32.self)
     }
 
     func decode(_: Int64.Type) throws -> Int64 {
-        return try unbox(self.storage.topAttribute, as: Int64.self)
+        try unbox(self.storage.topAttribute, as: Int64.self)
     }
 
     func decode(_: UInt.Type) throws -> UInt {
-        return try unbox(self.storage.topAttribute, as: UInt.self)
+        try unbox(self.storage.topAttribute, as: UInt.self)
     }
 
     func decode(_: UInt8.Type) throws -> UInt8 {
-        return try unbox(self.storage.topAttribute, as: UInt8.self)
+        try unbox(self.storage.topAttribute, as: UInt8.self)
     }
 
     func decode(_: UInt16.Type) throws -> UInt16 {
-        return try unbox(self.storage.topAttribute, as: UInt16.self)
+        try unbox(self.storage.topAttribute, as: UInt16.self)
     }
 
     func decode(_: UInt32.Type) throws -> UInt32 {
-        return try unbox(self.storage.topAttribute, as: UInt32.self)
+        try unbox(self.storage.topAttribute, as: UInt32.self)
     }
 
     func decode(_: UInt64.Type) throws -> UInt64 {
-        return try unbox(self.storage.topAttribute, as: UInt64.self)
+        try unbox(self.storage.topAttribute, as: UInt64.self)
     }
 
     func decode<T>(_: T.Type) throws -> T where T: Decodable {
-        return try unbox(self.storage.topAttribute, as: T.self)
+        try unbox(self.storage.topAttribute, as: T.self)
     }
 }
 
@@ -620,20 +680,60 @@ extension _DynamoDBDecoder {
         return unboxResult
     }
 
-    func unbox(_ attribute: DynamoDB.AttributeValue, as type: Data.Type) throws -> Data {
+    func unbox(_ attribute: DynamoDB.AttributeValue, as type: AWSBase64Data.Type) throws -> AWSBase64Data {
         guard case .b(let value) = attribute else {
-            throw DecodingError.typeMismatch(Data.self, .init(codingPath: self.codingPath, debugDescription: "Cannot convert from \(attribute)"))
+            throw DecodingError.typeMismatch(
+                AWSBase64Data.self,
+                .init(codingPath: self.codingPath, debugDescription: "Cannot convert from \(attribute)")
+            )
         }
         return value
     }
 
+    func unbox(_ attribute: DynamoDB.AttributeValue, as type: Date.Type) throws -> Date {
+        switch self.options.dateDecodingStrategy {
+        case .deferredToDate:
+            self.storage.pushAttribute(attribute)
+            defer { self.storage.popAttribute() }
+            return try Date(from: self)
+        case .millisecondsSince1970:
+            let value = try self.unbox(attribute, as: Double.self)
+            return Date(timeIntervalSince1970: value / 1000)
+        case .secondsSince1970:
+            let value = try self.unbox(attribute, as: Double.self)
+            return Date(timeIntervalSince1970: value)
+        case .iso8601:
+            let string = try self.unbox(attribute, as: String.self)
+            let date: Date?
+            #if compiler(<6.0)
+            date = _iso8601DateFormatter.date(from: string)
+            #else
+            if #available(macOS 12, iOS 15, tvOS 15, watchOS 8, *) {
+                date = try? Date(string, strategy: .iso8601)
+            } else {
+                date = _iso8601DateFormatter.date(from: string)
+            }
+            #endif
+            guard let date else {
+                throw DecodingError.dataCorrupted(
+                    DecodingError.Context(codingPath: self.codingPath, debugDescription: "Expected date string to be ISO8601-formatted.")
+                )
+            }
+            return date
+        case .custom(let closure):
+            return try closure(self)
+        }
+    }
+
     func unbox<T>(_ attribute: DynamoDB.AttributeValue, as type: T.Type) throws -> T where T: Decodable {
-        return try self.unbox_(attribute, as: T.self) as! T
+        try self.unbox_(attribute, as: T.self) as! T
     }
 
     func unbox_(_ attribute: DynamoDB.AttributeValue, as type: Decodable.Type) throws -> Any {
-        if type == Data.self {
-            return try self.unbox(attribute, as: Data.self)
+        if type == AWSBase64Data.self {
+            return try self.unbox(attribute, as: AWSBase64Data.self)
+        } else if type == Date.self {
+            return try self.unbox(attribute, as: Date.self)
         } else {
             self.storage.pushAttribute(attribute)
             defer { self.storage.popAttribute() }
@@ -641,3 +741,17 @@ extension _DynamoDBDecoder {
         }
     }
 }
+
+#if compiler(>=5.10)
+nonisolated(unsafe) let _iso8601DateFormatter: ISO8601DateFormatter = {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = .withInternetDateTime
+    return formatter
+}()
+#else
+let _iso8601DateFormatter: ISO8601DateFormatter = {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = .withInternetDateTime
+    return formatter
+}()
+#endif
